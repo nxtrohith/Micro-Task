@@ -2,15 +2,15 @@ import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
+    clerkUserId: {
+      type: String,
+      required: [true, "Clerk user ID is required"],
+      unique: true,
+      trim: true,
+    },
     fullName: {
       type: String,
       required: [true, "Full name is required"],
-      trim: true,
-    },
-    houseNumber: {
-      type: String,
-      required: [true, "House number is required"],
-      unique: true,
       trim: true,
     },
     email: {
@@ -24,9 +24,9 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
-    passwordHash: {
+    imageUrl: {
       type: String,
-      required: [true, "Password hash is required"],
+      trim: true,
     },
     role: {
       type: String,

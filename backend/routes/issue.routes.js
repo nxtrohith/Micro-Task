@@ -1,15 +1,17 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const upload = require('../middleware/upload');
+const { requireAuth, getAuth } = require('../middleware/auth');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 const { getDB } = require('../config/db');
 
 const router = express.Router();
 
 // ---------- POST /api/issues  ----------
-// Create a new issue with an optional image upload
-router.post('/', upload.single('image'), async (req, res) => {
+// Create a new issue with an optional image upload (requires authentication)
+router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
   try {
+    const { userId: clerkUserId } = getAuth(req);
     const { title, description, location, category } = req.body;
 
     if (!title || !description) {
@@ -31,6 +33,7 @@ router.post('/', upload.single('image'), async (req, res) => {
       location: location || null,
       category: category || null,
       imageUrl,
+      reportedBy: clerkUserId,
       status: 'reported',
       upvotes: [],
       createdAt: new Date(),

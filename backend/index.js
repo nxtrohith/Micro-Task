@@ -1,8 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { clerkMiddleware } = require('@clerk/express');
 const { connectDB, getDB } = require('./config/db');
 const issueRoutes = require('./routes/issue.routes');
+const userRoutes = require('./routes/user.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,12 +14,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Clerk middleware — makes req.auth available on every request
+// (does NOT enforce auth — individual routes use requireAuth())
+app.use(clerkMiddleware());
+
 // Routes
 app.get('/', (req, res) => {
   res.json({ message: 'Server is running' });
 });
 
 app.use('/api/issues', issueRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/api/test-db', async (req, res) => {
   try {

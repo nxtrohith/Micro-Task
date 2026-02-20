@@ -7,6 +7,11 @@ async function connectDB() {
   await client.connect();
   db = client.db();
   console.log('Connected to MongoDB');
+
+  // Ensure indexes
+  await db.collection('users').createIndex({ clerkUserId: 1 }, { unique: true });
+  await db.collection('users').createIndex({ email: 1 }, { unique: true });
+
   return db;
 }
 

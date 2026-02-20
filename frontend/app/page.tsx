@@ -52,31 +52,7 @@ function HeroImage() {
   );
 }
 
-/* ─── Trusted By / Partner Logos ─── */
-function TrustedBy() {
-  const partners = [
-  ];
 
-  if (partners.length === 0) {
-    return null;
-  }
-
-  return (
-    <section className="border-t border-border/40 py-10">
-      <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-10 px-6">
-        {partners.map((p) => (
-          <div
-            key={p.label}
-            className="flex items-center gap-2 text-muted-foreground"
-          >
-            <p.icon className="h-5 w-5" />
-            <span className="text-sm font-medium">{p.label}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 /* ─── Feature Row (alternating layout) ─── */
 function FeatureRow({
@@ -297,7 +273,6 @@ export default function Home() {
         <main>
           <Hero />
           <HeroImage />
-          <TrustedBy />
           <Features />
           <HowItWorks />
           <CTA />

@@ -163,19 +163,118 @@ router.post('/', requireAuth(), async (req, res) => {
 });
 
 // ---------- GET /api/issues  ----------
-// Fetch all issues (newest first)
+// Fetch all issues (newest first) with reporter name joined from users
 router.get('/', async (req, res) => {
   try {
     const db = getDB();
     const issues = await db
       .collection('issues')
-      .find({})
-      .sort({ createdAt: -1 })
+      .aggregate([
+        { $sort: { createdAt: -1 } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'reportedBy',
+            foreignField: 'clerkUserId',
+            as: '_reporter',
+          },
+        },
+        {
+          $addFields: {
+            reporterName: {
+              $ifNull: [{ $arrayElemAt: ['$_reporter.fullName', 0] }, 'Anonymous'],
+            },
+            reporterImage: { $arrayElemAt: ['$_reporter.imageUrl', 0] },
+          },
+        },
+        { $project: { _reporter: 0 } },
+      ])
       .toArray();
 
     res.json({ success: true, data: issues });
   } catch (err) {
     console.error('Error fetching issues:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ---------- GET /api/issues/:id/comments  ----------
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const db = getDB();
+    const comments = await db
+      .collection('comments')
+      .aggregate([
+        { $match: { issueId: req.params.id } },
+        { $sort: { createdAt: 1 } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'clerkUserId',
+            foreignField: 'clerkUserId',
+            as: '_user',
+          },
+        },
+        {
+          $addFields: {
+            userName: {
+              $ifNull: [{ $arrayElemAt: ['$_user.fullName', 0] }, 'Anonymous'],
+            },
+            userImage: { $arrayElemAt: ['$_user.imageUrl', 0] },
+          },
+        },
+        { $project: { _user: 0 } },
+      ])
+      .toArray();
+
+    res.json({ success: true, data: comments });
+  } catch (err) {
+    console.error('Error fetching comments:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ---------- POST /api/issues/:id/comments  ----------
+router.post('/:id/comments', requireAuth(), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const { text } = req.body;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, message: 'Comment text is required' });
+    }
+
+    const db = getDB();
+
+    // Verify issue exists
+    const issue = await db.collection('issues').findOne({ _id: new ObjectId(req.params.id) });
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    const comment = {
+      issueId: req.params.id,
+      clerkUserId,
+      text: text.trim(),
+      createdAt: new Date(),
+    };
+
+    const result = await db.collection('comments').insertOne(comment);
+
+    // Fetch user info for the response
+    const user = await db.collection('users').findOne({ clerkUserId });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        _id: result.insertedId,
+        ...comment,
+        userName: user?.fullName || 'Anonymous',
+        userImage: user?.imageUrl || null,
+      },
+    });
+  } catch (err) {
+    console.error('Error posting comment:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });

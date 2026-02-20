@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const aiPredictionLogSchema = new mongoose.Schema(
   {
@@ -46,4 +46,4 @@ const AIPredictionLog = mongoose.model(
   "AIPredictionLog",
   aiPredictionLogSchema
 );
-export default AIPredictionLog;
+module.exports = AIPredictionLog;

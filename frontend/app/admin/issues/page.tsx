@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@clerk/nextjs";
 import {
   Search,
-  SlidersHorizontal,
   Pencil,
   CheckCircle2,
   Loader2,
@@ -21,8 +20,9 @@ import {
   type AdminIssue,
 } from "@/components/admin/issue-edit-modal";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
+).replace(/\/$/, "");
 
 const STATUS_STYLES: Record<AdminIssue["status"], string> = {
   reported:
@@ -59,12 +59,6 @@ const DEPARTMENTS = [
   "Other",
 ];
 
-const ALL_STATUSES: AdminIssue["status"][] = [
-  "reported",
-  "approved",
-  "in_progress",
-  "resolved",
-];
 
 export default function AdminIssuesPage() {
   const { getToken } = useAuth();
@@ -78,7 +72,6 @@ export default function AdminIssuesPage() {
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterDept, setFilterDept] = useState<string>("");
   const [filterSeverity, setFilterSeverity] = useState<string>("");
-  const [showFilters, setShowFilters] = useState(false);
 
   // Edit modal
   const [editingIssue, setEditingIssue] = useState<AdminIssue | null>(null);
@@ -145,49 +138,73 @@ export default function AdminIssuesPage() {
     );
   }
 
-  // Filtered list
-  const filtered = issues.filter((issue) => {
-    const q = search.toLowerCase();
-    if (
-      q &&
-      !issue.title.toLowerCase().includes(q) &&
-      !issue.description.toLowerCase().includes(q) &&
-      !(issue.location ?? "").toLowerCase().includes(q)
-    )
-      return false;
-    if (filterStatus && issue.status !== filterStatus) return false;
-    if (filterDept && issue.suggestedDepartment !== filterDept) return false;
-    if (filterSeverity) {
-      const s = issue.severityScore ?? 0;
-      if (filterSeverity === "high" && s < 7) return false;
-      if (filterSeverity === "medium" && (s < 4 || s >= 7)) return false;
-      if (filterSeverity === "low" && s >= 4) return false;
+  // ── Per-status counts ──
+  const statusCounts = useMemo(() => {
+    const base = { reported: 0, approved: 0, in_progress: 0, resolved: 0 };
+    for (const i of issues) {
+      const s = i.status as keyof typeof base;
+      if (s in base) base[s]++;
     }
-    return true;
-  });
+    return { ...base, all: issues.length };
+  }, [issues]);
 
-  const activeFilters =
-    (filterStatus ? 1 : 0) + (filterDept ? 1 : 0) + (filterSeverity ? 1 : 0);
+  // ── Filtered list ──
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return issues.filter((issue) => {
+      if (
+        q &&
+        !issue.title.toLowerCase().includes(q) &&
+        !issue.description.toLowerCase().includes(q) &&
+        !(issue.location ?? "").toLowerCase().includes(q)
+      )
+        return false;
+      if (filterStatus && issue.status !== filterStatus) return false;
+      if (filterDept) {
+        const dept = (issue.suggestedDepartment ?? issue.category ?? "").toLowerCase();
+        if (dept !== filterDept.toLowerCase()) return false;
+      }
+      if (filterSeverity) {
+        const s = issue.severityScore ?? 0;
+        if (filterSeverity === "high" && s < 7) return false;
+        if (filterSeverity === "medium" && (s < 4 || s >= 7)) return false;
+        if (filterSeverity === "low" && s >= 4) return false;
+      }
+      return true;
+    });
+  }, [issues, search, filterStatus, filterDept, filterSeverity]);
+
+  const activeFilterCount =
+    (search ? 1 : 0) +
+    (filterStatus ? 1 : 0) +
+    (filterDept ? 1 : 0) +
+    (filterSeverity ? 1 : 0);
+
+  function clearAllFilters() {
+    setSearch("");
+    setFilterStatus("");
+    setFilterDept("");
+    setFilterSeverity("");
+  }
 
   return (
     <div className="flex flex-col min-h-screen">
       <AdminHeader
         title="All Issues"
-        subtitle={`${issues.length} total issues`}
+        subtitle={`${issues.length} total · ${filtered.length} shown`}
       />
 
       <main className="flex-1 p-4 sm:p-6 space-y-4">
-        {/* ── Top Controls ── */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          {/* Search */}
+        {/* ── Row 1: Search + Refresh ── */}
+        <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search issues by title, description or location…"
-              className="w-full rounded-xl border border-border bg-background pl-9 pr-4 py-2.5 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="Search by title, description or location…"
+              className="w-full rounded-xl border border-border bg-background pl-9 pr-8 py-2.5 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
             {search && (
               <button
@@ -199,122 +216,100 @@ export default function AdminIssuesPage() {
             )}
           </div>
 
-          {/* Filter toggle + refresh */}
-          <div className="flex items-center gap-2 shrink-0">
+          {activeFilterCount > 0 && (
             <button
-              onClick={() => setShowFilters((o) => !o)}
+              onClick={clearAllFilters}
+              className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors shrink-0"
+            >
+              <X className="h-3.5 w-3.5" />
+              Clear ({activeFilterCount})
+            </button>
+          )}
+
+          <button
+            onClick={fetchIssues}
+            disabled={loading}
+            title="Refresh"
+            className="flex items-center justify-center rounded-xl border border-border p-2.5 text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+          </button>
+        </div>
+
+        {/* ── Row 2: Status tabs ── */}
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              { value: "", label: "All", count: statusCounts.all },
+              { value: "reported", label: "Reported", count: statusCounts.reported },
+              { value: "approved", label: "Approved", count: statusCounts.approved },
+              { value: "in_progress", label: "In Progress", count: statusCounts.in_progress },
+              { value: "resolved", label: "Resolved", count: statusCounts.resolved },
+            ] as const
+          ).map(({ value, label, count }) => (
+            <button
+              key={value}
+              onClick={() => setFilterStatus(value)}
               className={cn(
-                "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors",
-                showFilters || activeFilters > 0
-                  ? "border-primary bg-primary/5 text-primary"
+                "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all",
+                filterStatus === value
+                  ? "border-primary bg-primary text-primary-foreground"
                   : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
               )}
             >
-              <SlidersHorizontal className="h-4 w-4" />
-              Filters
-              {activeFilters > 0 && (
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
-                  {activeFilters}
-                </span>
-              )}
+              {label}
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                  filterStatus === value
+                    ? "bg-white/20 text-white"
+                    : "bg-muted text-foreground"
+                )}
+              >
+                {count}
+              </span>
             </button>
-            <button
-              onClick={fetchIssues}
-              disabled={loading}
-              title="Refresh"
-              className="flex items-center justify-center rounded-xl border border-border p-2.5 text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors disabled:opacity-50"
-            >
-              <RefreshCw
-                className={cn("h-4 w-4", loading && "animate-spin")}
-              />
-            </button>
-          </div>
+          ))}
         </div>
 
-        {/* ── Filter Panel ── */}
-        {showFilters && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 rounded-xl border border-border bg-background p-4">
-            {/* Status */}
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Status
-              </label>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-              >
-                <option value="">All Statuses</option>
-                {ALL_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Department */}
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Department
-              </label>
-              <select
-                value={filterDept}
-                onChange={(e) => setFilterDept(e.target.value)}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-              >
-                <option value="">All Departments</option>
-                {DEPARTMENTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Severity */}
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Severity
-              </label>
-              <select
-                value={filterSeverity}
-                onChange={(e) => setFilterSeverity(e.target.value)}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-              >
-                <option value="">All Severities</option>
-                <option value="high">High (7–10)</option>
-                <option value="medium">Medium (4–6)</option>
-                <option value="low">Low (0–3)</option>
-              </select>
-            </div>
-
-            {/* Clear filters */}
-            {activeFilters > 0 && (
-              <div className="col-span-full flex justify-end">
-                <button
-                  onClick={() => {
-                    setFilterStatus("");
-                    setFilterDept("");
-                    setFilterSeverity("");
-                  }}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Clear all filters
-                </button>
-              </div>
+        {/* ── Row 3: Dept + Severity dropdowns ── */}
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={filterDept}
+            onChange={(e) => setFilterDept(e.target.value)}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 bg-background text-foreground transition-colors",
+              filterDept
+                ? "border-primary bg-primary/5 text-primary"
+                : "border-border"
             )}
-          </div>
-        )}
+          >
+            <option value="">All Departments</option>
+            {DEPARTMENTS.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
 
-        {/* ── Results count ── */}
-        {!loading && !error && (
-          <p className="text-xs text-muted-foreground">
-            Showing{" "}
-            <span className="font-medium text-foreground">{filtered.length}</span>{" "}
-            of {issues.length} issues
-          </p>
-        )}
+          <select
+            value={filterSeverity}
+            onChange={(e) => setFilterSeverity(e.target.value)}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 bg-background text-foreground transition-colors",
+              filterSeverity
+                ? "border-primary bg-primary/5 text-primary"
+                : "border-border"
+            )}
+          >
+            <option value="">All Severities</option>
+            <option value="high">High (7–10)</option>
+            <option value="medium">Medium (4–6)</option>
+            <option value="low">Low (0–3)</option>
+          </select>
+
+          <span className="ml-auto flex items-center text-xs text-muted-foreground self-center">
+            {filtered.length} of {issues.length} issues
+          </span>
+        </div>
 
         {/* ── Loading ── */}
         {loading && (
@@ -443,7 +438,7 @@ export default function AdminIssuesPage() {
                           {/* Department */}
                           <td className="px-4 py-3 hidden md:table-cell">
                             <span className="text-xs text-muted-foreground">
-                              {issue.suggestedDepartment ?? "—"}
+                              {issue.suggestedDepartment ?? issue.category ?? "—"}
                             </span>
                           </td>
 

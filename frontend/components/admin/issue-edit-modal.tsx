@@ -5,8 +5,9 @@ import { useAuth } from "@clerk/nextjs";
 import { X, Loader2, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
+).replace(/\/$/, "");
 
 export interface AdminIssue {
   _id: string;

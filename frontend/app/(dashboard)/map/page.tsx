@@ -7,7 +7,7 @@ import { useGeolocation } from "@/lib/hooks/use-geolocation";
 import type { Issue } from "@/components/issue-card";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 // Dynamically import the map — no SSR
 const IssueMap = dynamic(

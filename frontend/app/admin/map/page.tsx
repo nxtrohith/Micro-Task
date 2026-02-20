@@ -20,8 +20,9 @@ import type { AdminIssue } from "@/components/admin/issue-edit-modal";
 import { MARKER_COLORS } from "@/components/map/admin-issue-map";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
+).replace(/\/$/, "");
 
 // ── Dynamic import ── no SSR ─────────────────────────────────────────────
 const AdminIssueMap = dynamic(
@@ -64,9 +65,9 @@ const SEVERITY_OPTIONS = [
 ];
 
 const LEGEND = [
-  { color: MARKER_COLORS.reported, label: "Reported" },
-  { color: MARKER_COLORS.in_progress, label: "In Progress / Approved" },
-  { color: MARKER_COLORS.resolved, label: "Resolved" },
+  { color: MARKER_COLORS.reported, label: "Open / Unrepaired" },
+  { color: MARKER_COLORS.in_progress, label: "In Progress" },
+  { color: MARKER_COLORS.resolved, label: "Resolved (hidden by default)" },
   { color: "#3b82f6", label: "Your Location" },
 ];
 
@@ -283,9 +284,9 @@ function IssueListPanel({
                   </span>
 
                   {/* Department */}
-                  {issue.suggestedDepartment && (
+                  {(issue.suggestedDepartment ?? issue.category) && (
                     <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                      {issue.suggestedDepartment}
+                      {issue.suggestedDepartment ?? issue.category}
                     </span>
                   )}
 
@@ -445,7 +446,8 @@ export default function AdminMapPage() {
     const counts: Record<string, number> = {};
     for (const issue of issues) {
       if (!issue.coordinates) continue;
-      const d = issue.suggestedDepartment;
+      // Fall back to category if suggestedDepartment not yet assigned
+      const d = issue.suggestedDepartment ?? issue.category;
       if (d) counts[d] = (counts[d] ?? 0) + 1;
     }
     return counts;
@@ -469,6 +471,11 @@ export default function AdminMapPage() {
     const filtered = issues.filter((issue) => {
       if (!issue.coordinates) return false;
 
+      // Resolved issues are hidden from the map by default.
+      // They only appear when the admin explicitly selects the "Resolved" filter.
+      if (issue.status === "resolved" && filterStatus !== "resolved")
+        return false;
+
       if (
         q &&
         !issue.title.toLowerCase().includes(q) &&
@@ -480,11 +487,10 @@ export default function AdminMapPage() {
       if (filterStatus && issue.status !== filterStatus) return false;
 
       // Multi-dept: show if issue dept is in selected list (empty = show all)
-      if (
-        filterDepts.length > 0 &&
-        !filterDepts.includes(issue.suggestedDepartment ?? "")
-      )
-        return false;
+      if (filterDepts.length > 0) {
+        const dept = (issue.suggestedDepartment ?? issue.category ?? "").toLowerCase();
+        if (!filterDepts.some((d) => d.toLowerCase() === dept)) return false;
+      }
 
       if (filterSeverity) {
         const s = issue.severityScore ?? 0;
@@ -519,7 +525,7 @@ export default function AdminMapPage() {
     <div className="flex flex-col min-h-screen">
       <AdminHeader
         title="Map"
-        subtitle={`${statusCounts.all} geotagged · ${visibleIds.size} visible`}
+        subtitle={`${statusCounts.all} geotagged · ${visibleIds.size} active marker${visibleIds.size !== 1 ? "s" : ""}`}
       />
 
       <main className="flex-1 flex flex-col gap-4 p-4 sm:p-5">
@@ -638,7 +644,12 @@ export default function AdminMapPage() {
             />
           ))}
           <span className="ml-auto text-xs text-muted-foreground">
-            {visibleIds.size} marker{visibleIds.size !== 1 ? "s" : ""} visible
+            {visibleIds.size} active marker{visibleIds.size !== 1 ? "s" : ""}
+            {filterStatus !== "resolved" && statusCounts.resolved > 0 && (
+              <span className="ml-1 text-muted-foreground/50">
+                · {statusCounts.resolved} resolved hidden
+              </span>
+            )}
           </span>
         </div>
 
@@ -731,7 +742,7 @@ export default function AdminMapPage() {
             ))}
           </div>
           <p className="text-xs text-muted-foreground/60">
-            Click a marker to update status directly on the map
+            Click a marker to update status · Resolved issues hidden by default
           </p>
         </div>
       </main>

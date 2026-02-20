@@ -158,82 +158,52 @@ function GpsTab({ value, onChange }: LocationPickerProps) {
 }
 
 // ── Map Tab ───────────────────────────────────────────────────────────────
+const FALLBACK_CENTER: [number, number] = [20.5937, 78.9629]; // India
+const DEFAULT_ZOOM = 15;
+const FALLBACK_ZOOM = 5;
+
+type MapGeoState = "locating" | "ready" | "denied" | "unavailable";
+
 function MapTab({ value, onChange }: LocationPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const markerRef = useRef<import("leaflet").Marker | null>(null);
+  const LRef = useRef<typeof import("leaflet") | null>(null);
   const [geocoding, setGeocoding] = useState(false);
+  const [mapGeoState, setMapGeoState] = useState<MapGeoState>("locating");
+  const [geoError, setGeoError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    let cancelled = false;
-
-    (async () => {
-      const L = (await import("leaflet")).default;
-      await import("leaflet");
-      if (cancelled || !containerRef.current || mapRef.current) return;
-
-      // Default center: India
-      const initialCenter: [number, number] = value
-        ? [value.lat, value.lng]
-        : [20.5937, 78.9629];
-
-      const map = L.map(containerRef.current, {
-        center: initialCenter,
-        zoom: value ? 15 : 5,
-        zoomControl: true,
+  // ── helpers (defined before useEffect so they can be referenced) ──────
+  const bindDrag = useCallback(
+    (L: typeof import("leaflet"), marker: import("leaflet").Marker) => {
+      marker.on("dragend", async () => {
+        const pos = marker.getLatLng();
+        await doUpdateLocation(pos.lat, pos.lng);
       });
-      mapRef.current = map;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 19,
-      }).addTo(map);
-
-      // If there's already a value, show the marker
-      if (value) {
-        markerRef.current = L.marker([value.lat, value.lng], {
-          draggable: true,
-        }).addTo(map);
+  const doPlaceMarker = useCallback(
+    async (
+      L: typeof import("leaflet"),
+      map: import("leaflet").Map,
+      lat: number,
+      lng: number
+    ) => {
+      if (markerRef.current) {
+        markerRef.current.setLatLng([lat, lng]);
+      } else {
+        markerRef.current = L.marker([lat, lng], { draggable: true }).addTo(map);
         bindDrag(L, markerRef.current);
       }
+      await doUpdateLocation(lat, lng);
+    },
+    [bindDrag]
+  );
 
-      // Click to place / move marker
-      map.on("click", async (e: import("leaflet").LeafletMouseEvent) => {
-        const { lat, lng } = e.latlng;
-        placeMarker(L, map, lat, lng);
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function bindDrag(L: typeof import("leaflet"), marker: import("leaflet").Marker) {
-    marker.on("dragend", async () => {
-      const pos = marker.getLatLng();
-      await updateLocation(pos.lat, pos.lng);
-    });
-  }
-
-  async function placeMarker(
-    L: typeof import("leaflet"),
-    map: import("leaflet").Map,
-    lat: number,
-    lng: number
-  ) {
-    if (markerRef.current) {
-      markerRef.current.setLatLng([lat, lng]);
-    } else {
-      markerRef.current = L.marker([lat, lng], { draggable: true }).addTo(map);
-      bindDrag(L, markerRef.current);
-    }
-    await updateLocation(lat, lng);
-  }
-
-  async function updateLocation(lat: number, lng: number) {
+  async function doUpdateLocation(lat: number, lng: number) {
     setGeocoding(true);
     const address = await reverseGeocode(lat, lng);
     setGeocoding(false);
@@ -246,20 +216,165 @@ function MapTab({ value, onChange }: LocationPickerProps) {
     onChange(null);
   }
 
+  // Fly map smoothly to a position and optionally place a "you are here" marker style
+  const flyToLocation = useCallback(
+    (lat: number, lng: number, zoom = DEFAULT_ZOOM) => {
+      mapRef.current?.flyTo([lat, lng], zoom, { animate: true, duration: 0.8 });
+    },
+    []
+  );
+
+  // ── "My Location" button handler ──────────────────────────────────────
+  const goToMyLocation = useCallback(() => {
+    if (!navigator.geolocation) return;
+    setMapGeoState("locating");
+    setGeoError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        flyToLocation(pos.coords.latitude, pos.coords.longitude, DEFAULT_ZOOM);
+        setMapGeoState("ready");
+      },
+      (err) => {
+        setMapGeoState(
+          err.code === GeolocationPositionError.PERMISSION_DENIED ? "denied" : "unavailable"
+        );
+        setGeoError(
+          err.code === GeolocationPositionError.PERMISSION_DENIED
+            ? "Location access denied."
+            : "Could not get your location."
+        );
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  }, [flyToLocation]);
+
+  // ── Initialize map once ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    let cancelled = false;
+
+    (async () => {
+      const L = (await import("leaflet")).default;
+      if (cancelled || !containerRef.current || mapRef.current) return;
+
+      LRef.current = L;
+
+      // Fix Leaflet default marker icons broken by webpack asset hashing
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+        iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+      });
+
+      // Start at existing value or fallback; we'll flyTo GPS shortly
+      const initialCenter: [number, number] = value
+        ? [value.lat, value.lng]
+        : FALLBACK_CENTER;
+      const initialZoom = value ? DEFAULT_ZOOM : FALLBACK_ZOOM;
+
+      const map = L.map(containerRef.current, {
+        center: initialCenter,
+        zoom: initialZoom,
+        zoomControl: true,
+      });
+      mapRef.current = map;
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      // Restore existing pin if reopening the tab
+      if (value) {
+        markerRef.current = L.marker([value.lat, value.lng], { draggable: true }).addTo(map);
+        bindDrag(L, markerRef.current);
+        setMapGeoState("ready");
+      }
+
+      // Click to place / move marker
+      map.on("click", async (e: import("leaflet").LeafletMouseEvent) => {
+        const { lat, lng } = e.latlng;
+        await doPlaceMarker(L, map, lat, lng);
+      });
+
+      // Auto-center on user GPS if no existing value
+      if (!value) {
+        if (!navigator.geolocation) {
+          setMapGeoState("unavailable");
+          setGeoError("Geolocation not supported.");
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (cancelled) return;
+            map.flyTo(
+              [pos.coords.latitude, pos.coords.longitude],
+              DEFAULT_ZOOM,
+              { animate: true, duration: 0.8 }
+            );
+            setMapGeoState("ready");
+          },
+          (err) => {
+            if (cancelled) return;
+            setMapGeoState(
+              err.code === GeolocationPositionError.PERMISSION_DENIED
+                ? "denied"
+                : "unavailable"
+            );
+            setGeoError(
+              err.code === GeolocationPositionError.PERMISSION_DENIED
+                ? "Location access denied — map shows default area."
+                : "Could not get location — map shows default area."
+            );
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="space-y-2">
-      <p className="px-4 pt-3 text-xs text-muted-foreground">
-        Click anywhere on the map to drop a pin. Drag the pin to adjust.
-      </p>
+    <div className="space-y-0">
+      {/* Instruction bar */}
+      <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-1.5">
+        <p className="text-xs text-muted-foreground">
+          {mapGeoState === "locating"
+            ? "Finding your location…"
+            : mapGeoState === "denied" || mapGeoState === "unavailable"
+            ? geoError
+            : "Tap to drop a pin · drag to adjust"}
+        </p>
+        {/* My Location button */}
+        <button
+          type="button"
+          onClick={goToMyLocation}
+          title="Center on my location"
+          className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+        >
+          {mapGeoState === "locating" ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Navigation className="h-3 w-3" />
+          )}
+          My Location
+        </button>
+      </div>
 
       {/* Map container */}
-      <div ref={containerRef} className="h-52 w-full" />
+      <div ref={containerRef} className="h-44 sm:h-56 w-full" />
 
       {/* Selected coords */}
       {value && (
-        <div className="mx-4 mb-3 flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2">
-          <div className="min-w-0">
-            <p className="text-xs font-mono text-foreground">
+        <div className="mx-3 my-2 flex items-start justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-mono text-foreground break-all">
               {value.lat.toFixed(6)}, {value.lng.toFixed(6)}
             </p>
             {geocoding ? (
@@ -294,12 +409,12 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
     {
       id: "gps",
       label: "Current Location",
-      icon: <Navigation className="h-3.5 w-3.5" />,
+      icon: <Navigation className="h-3.5 w-3.5 shrink-0" />,
     },
     {
       id: "map",
       label: "Pick on Map",
-      icon: <Map className="h-3.5 w-3.5" />,
+      icon: <Map className="h-3.5 w-3.5 shrink-0" />,
     },
   ];
 
@@ -313,14 +428,14 @@ export function LocationPicker({ value, onChange }: LocationPickerProps) {
             type="button"
             onClick={() => { setTab(t.id); onChange(null); }}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors",
+              "flex flex-1 items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium transition-colors",
               tab === t.id
                 ? "border-b-2 border-primary text-primary bg-primary/5"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
             )}
           >
             {t.icon}
-            {t.label}
+            <span className="truncate">{t.label}</span>
           </button>
         ))}
       </div>

@@ -52,18 +52,18 @@ export function SpeechToTextButton({
   const isDisabled = isProcessing;
 
   return (
-    <div className={cn("flex flex-col gap-1.5", className)}>
-      <div className="flex items-center gap-2">
+    <div className={cn("flex flex-col gap-1.5 w-full min-w-0", className)}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         {/* Language selector */}
         {showLanguageSelector && !externalLang && (
-          <div className="relative flex items-center">
+          <div className="relative flex items-center min-w-0">
             <select
               value={internalLang}
               onChange={(e) => setInternalLang(e.target.value as LanguageCode)}
               disabled={isListening || isProcessing}
               className={cn(
                 "appearance-none rounded-lg border border-border bg-background",
-                "pl-2.5 pr-6 py-1.5 text-xs text-foreground",
+                "w-full max-w-[9rem] pl-2.5 pr-6 py-1.5 text-xs text-foreground",
                 "focus:outline-none focus:ring-2 focus:ring-primary/30",
                 "disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               )}
@@ -79,7 +79,7 @@ export function SpeechToTextButton({
         )}
 
         {/* Mic button */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             type="button"
             onClick={isListening ? stopRecording : startRecording}
@@ -128,7 +128,7 @@ export function SpeechToTextButton({
 
         {/* Listening badge */}
         {isListening && (
-          <span className="flex items-center gap-1 text-xs text-red-500 font-medium animate-pulse">
+          <span className="flex shrink-0 items-center gap-1 text-xs text-red-500 font-medium animate-pulse">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             Listening…
           </span>

@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { LocationPicker, type PickedLocation } from "@/components/location-picker";
 import { SpeechToTextButton } from "@/components/speech-to-text-button";
 import { useGeolocation } from "@/lib/hooks/use-geolocation";
+import { DuplicateWarningModal, type DuplicateMatch } from "@/components/duplicate-warning-modal";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
@@ -96,6 +97,8 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [webhookErrorCode, setWebhookErrorCode] = useState<string | null>(null);
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
   // Store GPS coords captured during analyze step
@@ -264,8 +267,43 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     }
   }
 
-  // Step 2: Confirm and save the issue to the DB
-  async function handleConfirm() {
+  // Step 2: Check for duplicates, then save
+  async function handleConfirm(forceSubmit = false) {
+    if (!aiFields) return;
+
+    // ── Duplicate check (skip if user already chose "Submit Anyway") ──
+    if (!forceSubmit) {
+      const gps = gpsCoordsRef.current ?? pickedLocation;
+      if (gps?.lat && gps?.lng) {
+        setCheckingDuplicate(true);
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/issues/check-duplicate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              description: aiFields.description,
+              lat: gps.lat,
+              lng: gps.lng,
+            }),
+          });
+          const data = await res.json().catch(() => ({ duplicates: [] }));
+          if (data.duplicates?.length > 0) {
+            setDuplicateMatches(data.duplicates);
+            setCheckingDuplicate(false);
+            return; // show modal, don't submit yet
+          }
+        } catch {
+          // fail open — proceed with submission
+        }
+        setCheckingDuplicate(false);
+      }
+    }
+
+    setDuplicateMatches([]); // clear modal
+    await doConfirm();
+  }
+
+  async function doConfirm() {
     if (!aiFields) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -356,7 +394,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         </button>
       ) : stage === "analyzing" ? (
         /* ── Loading / Analyzing state ── */
-        <div className="flex flex-col items-center justify-center gap-5 p-10 text-center">
+        <div className="flex flex-col items-center justify-center gap-5 px-6 py-10 sm:p-10 text-center">
           <div className="relative">
             {/* Outer ring */}
             <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
@@ -530,7 +568,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           )}
 
           {/* Actions */}
-          <div className="flex justify-between gap-2 pt-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             <Button
               type="button"
               variant="ghost"
@@ -542,7 +580,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               <ArrowLeft className="h-3.5 w-3.5" />
               Back
             </Button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="ghost"
@@ -555,11 +593,11 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               <Button
                 type="button"
                 size="sm"
-                onClick={handleConfirm}
-                disabled={submitting}
+                onClick={() => handleConfirm()}
+                disabled={submitting || checkingDuplicate}
               >
-                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                {submitting ? "Posting…" : "Confirm & Post"}
+                {(submitting || checkingDuplicate) && <Loader2 className="h-4 w-4 animate-spin" />}
+                {submitting ? "Posting…" : checkingDuplicate ? "Checking…" : "Confirm & Post"}
               </Button>
             </div>
           </div>
@@ -599,8 +637,8 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             </label>
 
             {/* STT controls row — language dropdown + mic button */}
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
-              <span className="text-xs text-muted-foreground shrink-0">🎙️ Voice input:</span>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <span className="text-xs text-muted-foreground shrink-0">🎙️ Voice:</span>
               <SpeechToTextButton
                 onTranscript={handleTranscript}
                 showLanguageSelector
@@ -665,13 +703,13 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
           {/* GPS Location Capture */}
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
                   {geoStatus === "idle" && (
                     <p className="text-xs text-muted-foreground">
-                      GPS coordinates will be captured on submit, or&nbsp;
+                      GPS captured on submit, or&nbsp;
                       <button
                         type="button"
                         onClick={() => requestLocation()}
@@ -689,14 +727,14 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                   )}
                   {geoStatus === "success" && coords && (
                     <p className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      GPS captured — {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">GPS captured — {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}</span>
                     </p>
                   )}
                   {(geoStatus === "denied" || geoStatus === "unavailable" || geoStatus === "timeout" || geoStatus === "error") && (
                     <p className="flex items-center gap-1.5 text-xs text-orange-600 dark:text-orange-400">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{geoError}</span>
+                      <span className="line-clamp-2">{geoError}</span>
                     </p>
                   )}
                 </div>
@@ -721,10 +759,12 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                 </button>
               )}
             </div>
-            <LocationPicker
-              value={pickedLocation}
-              onChange={setPickedLocation}
-            />
+            <div className="mt-3">
+              <LocationPicker
+                value={pickedLocation}
+                onChange={setPickedLocation}
+              />
+            </div>
           </div>
 
           {/* Image upload */}
@@ -797,6 +837,15 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             </Button>
           </div>
         </form>
+      )}
+
+      {/* Duplicate warning modal */}
+      {duplicateMatches.length > 0 && (
+        <DuplicateWarningModal
+          matches={duplicateMatches}
+          onSubmitAnyway={() => handleConfirm(true)}
+          onClose={() => setDuplicateMatches([])}
+        />
       )}
     </div>
   );

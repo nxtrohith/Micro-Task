@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { MapPin, Tag, ChevronUp, Loader2, MessageSquare, User } from "lucide-react";
 import { CommentsSection } from "@/components/comments-section";
+import { ImageLightbox, ExpandHint } from "@/components/image-lightbox";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
@@ -48,6 +49,7 @@ export function IssueCard({ issue }: { issue: Issue }) {
   );
   const [pending, setPending] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   async function handleUpvote() {
     if (!userId || pending) return;
@@ -117,15 +119,23 @@ export function IssueCard({ issue }: { issue: Issue }) {
           {issue.description}
         </p>
 
-        {/* Optional image */}
+        {/* Optional image — click to open lightbox */}
         {issue.imageUrl && (
           <div className="mt-3 overflow-hidden rounded-lg border border-border/40">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={issue.imageUrl}
-              alt={issue.title}
-              className="h-48 w-full object-cover transition-transform group-hover:scale-[1.02]"
-            />
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(true)}
+              className="group/img relative block w-full cursor-zoom-in"
+              aria-label="View fullscreen"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={issue.imageUrl}
+                alt={issue.title}
+                className="h-48 w-full object-cover transition-transform group-hover:scale-[1.02]"
+              />
+              <ExpandHint />
+            </button>
           </div>
         )}
 
@@ -189,21 +199,15 @@ export function IssueCard({ issue }: { issue: Issue }) {
           <CommentsSection issueId={issue._id} />
         </div>
       )}
+
+      {/* Fullscreen image lightbox */}
+      {lightboxOpen && issue.imageUrl && (
+        <ImageLightbox
+          src={issue.imageUrl}
+          alt={issue.title}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
     </article>
   );
-}
-
-
-export interface Issue {
-  _id: string;
-  title: string;
-  description: string;
-  location?: string;
-  imageUrl?: string;
-  category?: string;
-  status: "reported" | "approved" | "in_progress" | "resolved";
-  upvotes: string[];
-  reportedBy?: string;
-  createdAt: string;
-  coordinates?: { lat: number; lng: number };
 }

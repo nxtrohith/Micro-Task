@@ -284,9 +284,9 @@ function IssueListPanel({
                   </span>
 
                   {/* Department */}
-                  {(issue.suggestedDepartment ?? issue.category) && (
+                  {issue.suggestedDepartment && (
                     <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                      {issue.suggestedDepartment ?? issue.category}
+                      {issue.suggestedDepartment}
                     </span>
                   )}
 
@@ -446,8 +446,8 @@ export default function AdminMapPage() {
     const counts: Record<string, number> = {};
     for (const issue of issues) {
       if (!issue.coordinates) continue;
-      // Fall back to category if suggestedDepartment not yet assigned
-      const d = issue.suggestedDepartment ?? issue.category;
+      // Fall back to suggestedDepartment only
+      const d = issue.suggestedDepartment;
       if (d) counts[d] = (counts[d] ?? 0) + 1;
     }
     return counts;
@@ -488,7 +488,7 @@ export default function AdminMapPage() {
 
       // Multi-dept: show if issue dept is in selected list (empty = show all)
       if (filterDepts.length > 0) {
-        const dept = (issue.suggestedDepartment ?? issue.category ?? "").toLowerCase();
+        const dept = (issue.suggestedDepartment ?? "").toLowerCase();
         if (!filterDepts.some((d) => d.toLowerCase() === dept)) return false;
       }
 

@@ -15,7 +15,6 @@ export interface AdminIssue {
   description: string;
   location?: string;
   imageUrl?: string;
-  category?: string;
   predictedIssueType?: string;
   severityScore?: number;
   suggestedDepartment?: string;

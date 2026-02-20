@@ -16,11 +16,16 @@ const WEBHOOK_TIMEOUT_MS = 90000; // 90 s — production n8n workflows can take 
 // The issue is NOT saved to the DB here. 
 router.post('/preview', requireAuth(), upload.single('image'), async (req, res) => {
   try {
+<<<<<<< HEAD
+    const { userId: clerkUserId } = getAuth(req);
+    const { title, description, location, lat, lng } = req.body;
+=======
     const { title, description } = req.body;
     console.log('\n[PREVIEW] ── New preview request received ──');
     console.log('[PREVIEW] Title:', title);
     console.log('[PREVIEW] Description:', description);
     console.log('[PREVIEW] Image attached:', req.file ? `yes (${req.file.originalname}, ${(req.file.size / 1024).toFixed(1)} KB)` : 'no');
+>>>>>>> 3414cf4ab471eaa4d55491da470b40a4493b3972
 
     if (!title || !description) {
       return res.status(400).json({ success: false, message: 'Title and description are required' });
@@ -133,11 +138,15 @@ router.post('/', requireAuth(), async (req, res) => {
       title,
       description,
       location: location || null,
+<<<<<<< HEAD
+      imageUrl,
+=======
       category: category || null,
       imageUrl: imageUrl || null,
       predictedIssueType: predictedIssueType || null,
       severityScore: severityScore != null ? parseInt(severityScore, 10) : null,
       suggestedDepartment: suggestedDepartment || null,
+>>>>>>> 3414cf4ab471eaa4d55491da470b40a4493b3972
       coordinates,
       reportedBy: clerkUserId,
       status: 'reported',
@@ -429,7 +438,7 @@ router.patch('/:id', requireAuth(), async (req, res) => {
     const issueId = new ObjectId(req.params.id);
     const allowedFields = [
       'status', 'severityScore', 'suggestedDepartment',
-      'title', 'description', 'location', 'category', 'predictedIssueType',
+      'title', 'description', 'location', 'predictedIssueType',
     ];
 
     const updates = {};

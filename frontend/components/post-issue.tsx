@@ -22,30 +22,9 @@ import { DuplicateWarningModal, type DuplicateMatch } from "@/components/duplica
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
-const CATEGORIES = [
-  "Infrastructure",
-  "Safety",
-  "Sanitation",
-  "Utilities",
-  "Electrical",
-  "Plumbing",
-  "Other",
-];
-
-const DEPARTMENTS = [
-  "Electrical",
-  "Plumbing",
-  "Civil",
-  "Housekeeping",
-  "Lift",
-  "Security",
-  "Other",
-];
-
 interface FormState {
   title: string;
   description: string;
-  category: string;
   location: string;
 }
 
@@ -83,7 +62,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
-    category: "",
     location: "",
   });
   const [errors, setErrors] = useState<FormErrors>({});
@@ -213,6 +191,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       const body = new FormData();
       body.append("title", form.title.trim());
       body.append("description", form.description.trim());
+      if (form.location) body.append("location", form.location.trim());
       if (image) body.append("image", image);
 
       const res = await fetch(`${BACKEND_URL}/api/issues/preview`, {
@@ -339,8 +318,8 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         throw new Error(data.message || `Server error (${res.status})`);
       }
 
-      // Full reset
-      setForm({ title: "", description: "", category: "", location: "" });
+      // Reset
+      setForm({ title: "", description: "", location: "" });
       removeImage();
       resetGeo();
       setAiFields(null);
@@ -360,12 +339,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   }
 
   function handleCancel() {
-    // Abort any in-flight preview request
-    if (previewAbortRef.current) {
-      previewAbortRef.current.abort();
-      previewAbortRef.current = null;
-    }
-    setForm({ title: "", description: "", category: "", location: "" });
+    setForm({ title: "", description: "", location: "" });
     removeImage();
     setPickedLocation(null);
     setErrors({});
@@ -664,28 +638,8 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             )}
           </div>
 
-          {/* Category + Location text */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label htmlFor="category" className="text-sm font-medium">
-                Category
-              </label>
-              <select
-                id="category"
-                name="category"
-                value={form.category}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">Select category…</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-
+          {/* Location text */}
+          <div className="grid grid-cols-1 gap-4">
             <div className="space-y-1">
               <label htmlFor="location" className="text-sm font-medium">
                 Location (text)

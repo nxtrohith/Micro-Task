@@ -161,7 +161,7 @@ export default function AdminIssuesPage() {
         return false;
       if (filterStatus && issue.status !== filterStatus) return false;
       if (filterDept) {
-        const dept = (issue.suggestedDepartment ?? issue.category ?? "").toLowerCase();
+        const dept = (issue.suggestedDepartment ?? "").toLowerCase();
         if (dept !== filterDept.toLowerCase()) return false;
       }
       if (filterSeverity) {
@@ -405,9 +405,9 @@ export default function AdminIssuesPage() {
                                 <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1 max-w-[180px]">
                                   {issue.description}
                                 </p>
-                                {issue.category && (
+                                {issue.suggestedDepartment && (
                                   <span className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                                    {issue.category}
+                                    {issue.suggestedDepartment}
                                   </span>
                                 )}
                               </div>
@@ -438,7 +438,7 @@ export default function AdminIssuesPage() {
                           {/* Department */}
                           <td className="px-4 py-3 hidden md:table-cell">
                             <span className="text-xs text-muted-foreground">
-                              {issue.suggestedDepartment ?? issue.category ?? "—"}
+                              {issue.suggestedDepartment ?? "—"}
                             </span>
                           </td>
 

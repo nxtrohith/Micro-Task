@@ -26,11 +26,7 @@ const issueSchema = new mongoose.Schema(
       type: String, // Cloudinary URL stored as a plain string
       trim: true,
     },
-    category: {
-      type: String,
-      trim: true,
-    },
-    predictedIssueType: {
+    predictedIssueType:{
       type: String,
       trim: true,
     },
@@ -85,7 +81,6 @@ issueSchema.virtual("priorityScore").get(function () {
 // Indexes
 issueSchema.index({ status: 1 });
 issueSchema.index({ severityScore: -1 });
-issueSchema.index({ category: 1 });
 issueSchema.index({ createdAt: -1 });
 
 // Pre-save: if status is set to "resolved", ensure severityScore exists

@@ -1,15 +1,17 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const upload = require('../middleware/upload');
+const { requireAuth, getAuth } = require('../middleware/auth');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 const { getDB } = require('../config/db');
 
 const router = express.Router();
 
 // ---------- POST /api/issues  ----------
-// Create a new issue with an optional image upload
-router.post('/', upload.single('image'), async (req, res) => {
+// Create a new issue with an optional image upload (requires authentication)
+router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
   try {
+    const { userId: clerkUserId } = getAuth(req);
     const { title, description, location, category } = req.body;
 
     if (!title || !description) {
@@ -31,6 +33,7 @@ router.post('/', upload.single('image'), async (req, res) => {
       location: location || null,
       category: category || null,
       imageUrl,
+      reportedBy: clerkUserId,
       status: 'reported',
       upvotes: [],
       createdAt: new Date(),
@@ -64,6 +67,42 @@ router.get('/', async (req, res) => {
     res.json({ success: true, data: issues });
   } catch (err) {
     console.error('Error fetching issues:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ---------- PATCH /api/issues/:id/upvote  ----------
+// Toggle upvote for the authenticated user
+router.patch('/:id/upvote', requireAuth(), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const db = getDB();
+    const issueId = new ObjectId(req.params.id);
+
+    const issue = await db.collection('issues').findOne({ _id: issueId });
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    const hasUpvoted = Array.isArray(issue.upvotes) && issue.upvotes.includes(clerkUserId);
+    const update = hasUpvoted
+      ? { $pull: { upvotes: clerkUserId } }
+      : { $addToSet: { upvotes: clerkUserId } };
+
+    await db.collection('issues').updateOne({ _id: issueId }, update);
+
+    const updated = await db.collection('issues').findOne({ _id: issueId });
+
+    res.json({
+      success: true,
+      data: {
+        upvotes: updated.upvotes,
+        upvoteCount: updated.upvotes.length,
+        hasUpvoted: !hasUpvoted,
+      },
+    });
+  } catch (err) {
+    console.error('Error toggling upvote:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });

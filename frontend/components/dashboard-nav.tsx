@@ -21,7 +21,7 @@ export function DashboardNav() {
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/90 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
         {/* Logo */}
-        <Link href="/" className="text-xl font-bold tracking-tight hover:opacity-80 transition-opacity">
+        <Link href="/" className="text-2xl font-extrabold tracking-tight hover:opacity-80 transition-opacity">
           Civix.
         </Link>
 

@@ -71,6 +71,42 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ---------- PATCH /api/issues/:id/upvote  ----------
+// Toggle upvote for the authenticated user
+router.patch('/:id/upvote', requireAuth(), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const db = getDB();
+    const issueId = new ObjectId(req.params.id);
+
+    const issue = await db.collection('issues').findOne({ _id: issueId });
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    const hasUpvoted = Array.isArray(issue.upvotes) && issue.upvotes.includes(clerkUserId);
+    const update = hasUpvoted
+      ? { $pull: { upvotes: clerkUserId } }
+      : { $addToSet: { upvotes: clerkUserId } };
+
+    await db.collection('issues').updateOne({ _id: issueId }, update);
+
+    const updated = await db.collection('issues').findOne({ _id: issueId });
+
+    res.json({
+      success: true,
+      data: {
+        upvotes: updated.upvotes,
+        upvoteCount: updated.upvotes.length,
+        hasUpvoted: !hasUpvoted,
+      },
+    });
+  } catch (err) {
+    console.error('Error toggling upvote:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ---------- GET /api/issues/:id  ----------
 router.get('/:id', async (req, res) => {
   try {

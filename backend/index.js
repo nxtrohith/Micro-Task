@@ -1,0 +1,37 @@
+require('dotenv').config();
+const express = require('express');
+const { connectDB, getDB } = require('./config/db');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Routes
+app.get('/', (req, res) => {
+  res.json({ message: 'Server is running' });
+});
+
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const db = getDB();
+    await db.command({ ping: 1 });
+    res.json({ success: true, message: 'MongoDB connection is healthy' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'MongoDB connection failed', error: err.message });
+  }
+});
+
+// Connect to DB then start server
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+  });

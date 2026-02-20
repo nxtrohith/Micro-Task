@@ -19,6 +19,7 @@ export interface Issue {
   upvotes: string[];
   reportedBy?: string;
   createdAt: string;
+  coordinates?: { lat: number; lng: number };
 }
 
 const STATUS_STYLES: Record<Issue["status"], string> = {

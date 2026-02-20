@@ -20,8 +20,9 @@ import type { AdminIssue } from "@/components/admin/issue-edit-modal";
 import { MARKER_COLORS } from "@/components/map/admin-issue-map";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
+).replace(/\/$/, "");
 
 // ── Dynamic import ── no SSR ─────────────────────────────────────────────
 const AdminIssueMap = dynamic(

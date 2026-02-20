@@ -21,8 +21,9 @@ import {
   type AdminIssue,
 } from "@/components/admin/issue-edit-modal";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
+).replace(/\/$/, "");
 
 const STATUS_STYLES: Record<AdminIssue["status"], string> = {
   reported:

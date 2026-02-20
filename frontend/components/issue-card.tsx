@@ -6,7 +6,7 @@ import { formatDistanceToNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { MapPin, Tag, ChevronUp, User, Loader2 } from "lucide-react";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 export interface Issue {
   _id: string;

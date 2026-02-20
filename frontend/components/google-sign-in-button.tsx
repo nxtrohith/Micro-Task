@@ -3,7 +3,7 @@
 import { SignInButton } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 /**
  * GoogleSignInButton

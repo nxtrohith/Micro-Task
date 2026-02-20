@@ -6,10 +6,10 @@ import type { AdminIssue } from "@/components/admin/issue-edit-modal";
 
 // ── Marker colour per status ──────────────────────────────────────────────
 export const MARKER_COLORS: Record<string, string> = {
-  reported: "#ef4444",
-  approved: "#f97316",
-  in_progress: "#f97316",
-  resolved: "#22c55e",
+  reported: "#ef4444",   // Red  — open / unrepaired
+  approved: "#ef4444",   // Red  — still open (awaiting fix)
+  in_progress: "#f97316", // Orange — being worked on
+  resolved: "#22c55e",   // Green — resolved (hidden from map by default)
 };
 
 const STATUS_LABELS: Record<string, string> = {

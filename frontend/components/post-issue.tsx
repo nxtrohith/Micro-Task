@@ -22,6 +22,16 @@ import { DuplicateWarningModal, type DuplicateMatch } from "@/components/duplica
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
+const suggestedDepartments = [
+  "Electrical",
+  "Plumbing",
+  "Civil",
+  "Housekeeping",
+  "Lift",
+  "Security",
+  "Other",
+];
+
 interface FormState {
   title: string;
   description: string;
@@ -36,7 +46,6 @@ interface FormErrors {
 
 interface AIFields {
   imageUrl: string | null;
-  category: string;
   predictedIssueType: string;
   severityScore: number | string;
   suggestedDepartment: string;
@@ -208,7 +217,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
       // Even if the call failed, fall back gracefully to review with original fields
       const responseData = res.ok ? data.data : null;
-      const aiDataPresent = responseData?.category || responseData?.predictedIssueType;
+      const aiDataPresent = responseData?.predictedIssueType;
 
       if (!res.ok || !aiDataPresent) {
         setWebhookFailed(true);
@@ -219,7 +228,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
       setAiFields({
         imageUrl: responseData?.imageUrl ?? null,
-        category: responseData?.category ?? form.category,
         predictedIssueType: responseData?.predictedIssueType ?? "",
         severityScore: responseData?.severityScore ?? "",
         suggestedDepartment: responseData?.suggestedDepartment ?? "",
@@ -236,7 +244,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       setWebhookErrorCode(isAbort ? "TIMEOUT" : "NETWORK_ERROR");
       setAiFields({
         imageUrl: null,
-        category: form.category,
         predictedIssueType: "",
         severityScore: "",
         suggestedDepartment: "",
@@ -294,7 +301,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       const payload: Record<string, unknown> = {
         title: form.title.trim(),
         description: aiFields.description,
-        category: aiFields.category || form.category || null,
         location: form.location.trim() || null,
         imageUrl: aiFields.imageUrl,
         predictedIssueType: aiFields.predictedIssueType || null,
@@ -447,40 +453,19 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             />
           </div>
 
-          {/* Category + Issue Type */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label htmlFor="ai-category" className="text-sm font-medium flex items-center gap-1.5">
-                Category
-                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
-              </label>
-              <select
-                id="ai-category"
-                name="category"
-                value={aiFields.category}
-                onChange={handleAiFieldChange}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">Select category…</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label htmlFor="ai-predictedIssueType" className="text-sm font-medium flex items-center gap-1.5">
-                Issue Type
-                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
-              </label>
-              <input
-                id="ai-predictedIssueType"
-                name="predictedIssueType"
-                value={aiFields.predictedIssueType}
-                onChange={handleAiFieldChange}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
+          {/* Issue Type */}
+          <div className="space-y-1">
+            <label htmlFor="ai-predictedIssueType" className="text-sm font-medium flex items-center gap-1.5">
+              Issue Type
+              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+            </label>
+            <input
+              id="ai-predictedIssueType"
+              name="predictedIssueType"
+              value={aiFields.predictedIssueType}
+              onChange={handleAiFieldChange}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
+            />
           </div>
 
           {/* Severity + Department */}
@@ -515,7 +500,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               >
                 <option value="">Select department…</option>
-                {DEPARTMENTS.map((d) => (
+                {suggestedDepartments.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>

@@ -3,11 +3,16 @@ const express = require('express');
 const cors = require('cors');
 const { clerkMiddleware } = require('@clerk/express');
 const { connectDB, getDB } = require('./config/db');
+const { initializeEscalationCron } = require('./cron/escalationCron');
 const issueRoutes = require('./routes/issue.routes');
 const userRoutes = require('./routes/user.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Store cron job reference for cleanup
+let cronJobs = null;
 
 // Middleware
 app.use(cors());
@@ -25,6 +30,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/issues', issueRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin/issues', adminRoutes);
 
 app.get('/api/test-db', async (req, res) => {
   try {
@@ -39,8 +45,19 @@ app.get('/api/test-db', async (req, res) => {
 // Connect to DB then start server
 connectDB()
   .then(() => {
+    // Initialize escalation cron job
+    cronJobs = initializeEscalationCron();
+    console.log('[STARTUP] Escalation cron job initialized');
+
+    // Ensure escalationLogs collection indexes
+    const db = getDB();
+    db.collection('escalationLogs').createIndex({ issueId: 1, callSentAt: -1 });
+    db.collection('escalationLogs').createIndex({ callSentAt: 1 });
+    console.log('[STARTUP] Escalation indexes created');
+
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`[ESCALATION SYSTEM] Active and ready for high-severity issue escalations`);
     });
   })
   .catch((err) => {

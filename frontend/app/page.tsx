@@ -7,10 +7,12 @@ import {
   Users,
   Zap,
 } from "lucide-react";
+import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { Navbar } from "@/components/navbar";
 import { GoogleSignInButton } from "@/components/google-sign-in-button";
 import { CTAButton } from "@/components/cta-button";
 import { UserSync } from "@/components/user-sync";
+import { RoleRedirect } from "@/components/role-redirect";
 
 /* ─── Hero ─── */
 function Hero() {
@@ -283,16 +285,25 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       <UserSync />
-      <Navbar />
-      <main>
-        <Hero />
-        <HeroImage />
-        <TrustedBy />
-        <Features />
-        <HowItWorks />
-        <CTA />
-      </main>
-      <Footer />
+
+      {/* Signed-in users are redirected to their dashboard immediately */}
+      <SignedIn>
+        <RoleRedirect />
+      </SignedIn>
+
+      {/* Only show the landing page to visitors who are NOT signed in */}
+      <SignedOut>
+        <Navbar />
+        <main>
+          <Hero />
+          <HeroImage />
+          <TrustedBy />
+          <Features />
+          <HowItWorks />
+          <CTA />
+        </main>
+        <Footer />
+      </SignedOut>
     </div>
   );
 }

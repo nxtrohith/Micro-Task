@@ -1,10 +1,22 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { ImagePlus, X, ChevronDown, Loader2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
+import {
+  ImagePlus,
+  X,
+  ChevronDown,
+  Loader2,
+  MapPin,
+  CheckCircle2,
+  AlertTriangle,
+  Sparkles,
+  ArrowLeft,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LocationPicker, type PickedLocation } from "@/components/location-picker";
+import { SpeechToTextButton } from "@/components/speech-to-text-button";
 import { useGeolocation } from "@/lib/hooks/use-geolocation";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
@@ -19,6 +31,16 @@ const CATEGORIES = [
   "Other",
 ];
 
+const DEPARTMENTS = [
+  "Electrical",
+  "Plumbing",
+  "Civil",
+  "Housekeeping",
+  "Lift",
+  "Security",
+  "Other",
+];
+
 interface FormState {
   title: string;
   description: string;
@@ -29,17 +51,34 @@ interface FormState {
 interface FormErrors {
   title?: string;
   description?: string;
+  image?: string;
+}
+
+interface AIFields {
+  imageUrl: string | null;
+  category: string;
+  predictedIssueType: string;
+  severityScore: number | string;
+  suggestedDepartment: string;
+  description: string;
 }
 
 interface PostIssueProps {
   onSuccess?: () => void;
 }
 
+type Stage = "form" | "analyzing" | "review";
+
+// How long (ms) the frontend waits for the /preview response before aborting.
+// Must be slightly longer than the backend axios timeout (90 s) so the backend
+// error is surfaced rather than a raw network abort.
+const PREVIEW_FETCH_TIMEOUT_MS = 100_000; // 100 s
+
 export function PostIssue({ onSuccess }: PostIssueProps) {
   const { getToken } = useAuth();
-  const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
 
   const [expanded, setExpanded] = useState(false);
+  const [stage, setStage] = useState<Stage>("form");
   const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
@@ -49,15 +88,56 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [errors, setErrors] = useState<FormErrors>({});
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [pickedLocation, setPickedLocation] = useState<PickedLocation | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [aiFields, setAiFields] = useState<AIFields | null>(null);
+  const [webhookFailed, setWebhookFailed] = useState(false);
+  const [webhookErrorCode, setWebhookErrorCode] = useState<string | null>(null);
+  const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
+  // Store GPS coords captured during analyze step
+  const gpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  // AbortController for the in-flight /preview fetch
+  const previewAbortRef = useRef<AbortController | null>(null);
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
+  // Tick an elapsed-seconds counter while in the "analyzing" stage
+  useEffect(() => {
+    if (stage !== "analyzing") {
+      setElapsedSeconds(0);
+      return;
+    }
+    setElapsedSeconds(0);
+    const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [stage]);
+
+  function handleChange(
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
     if (errors[name as keyof FormErrors]) {
       setErrors((e) => ({ ...e, [name]: undefined }));
+    }
+  }
+
+  function handleAiFieldChange(
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) {
+    const { name, value } = e.target;
+    setAiFields((f) => (f ? { ...f, [name]: value } : f));
+  }
+
+  function handleTranscript(text: string) {
+    setForm((f) => ({
+      ...f,
+      description: f.description ? `${f.description} ${text}` : text,
+    }));
+    if (errors.description) {
+      setErrors((e) => ({ ...e, description: undefined }));
     }
   }
 
@@ -92,41 +172,128 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     if (!form.description.trim() || form.description.trim().length < 10) {
       newErrors.description = "Description must be at least 10 characters.";
     }
+    if (!image) {
+      newErrors.image = "A photo is required to submit an issue.";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
 
+  // Step 1: Upload image + call webhook, show loading then review panel
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validate()) return;
 
-    setSubmitting(true);
+    setStage("analyzing");
     setSubmitError(null);
+    setWebhookFailed(false);
+    setWebhookErrorCode(null);
+    setAnalysisTimedOut(false);
+
+    // Set up an AbortController so we never hang forever
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    const abortTimer = setTimeout(() => {
+      setAnalysisTimedOut(true);
+      controller.abort();
+    }, PREVIEW_FETCH_TIMEOUT_MS);
 
     try {
-      // Auto-request location if not yet captured (silent — won't block submission)
+      // Capture GPS silently
       let gpsCoords = coords;
       if (geoStatus === "idle") {
         gpsCoords = await requestLocation();
       }
+      gpsCoordsRef.current = gpsCoords;
 
       const token = await getToken();
       const body = new FormData();
       body.append("title", form.title.trim());
       body.append("description", form.description.trim());
-      if (form.category) body.append("category", form.category);
-      if (form.location) body.append("location", form.location.trim());
       if (image) body.append("image", image);
-      // Attach GPS coordinates if available
-      if (gpsCoords) {
-        body.append("lat", gpsCoords.lat.toString());
-        body.append("lng", gpsCoords.lng.toString());
-      }
 
-      const res = await fetch(`${BACKEND_URL}/api/issues`, {
+      const res = await fetch(`${BACKEND_URL}/api/issues/preview`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body,
+        signal: controller.signal,
+      });
+
+      clearTimeout(abortTimer);
+      previewAbortRef.current = null;
+
+      const data = await res.json().catch(() => ({}));
+
+      // Even if the call failed, fall back gracefully to review with original fields
+      const responseData = res.ok ? data.data : null;
+      const aiDataPresent = responseData?.category || responseData?.predictedIssueType;
+
+      if (!res.ok || !aiDataPresent) {
+        setWebhookFailed(true);
+        setWebhookErrorCode(responseData?.webhookError ?? (res.ok ? "EMPTY_RESPONSE" : "HTTP_ERROR"));
+      } else {
+        setWebhookErrorCode(responseData?.webhookError ?? null);
+      }
+
+      setAiFields({
+        imageUrl: responseData?.imageUrl ?? null,
+        category: responseData?.category ?? form.category,
+        predictedIssueType: responseData?.predictedIssueType ?? "",
+        severityScore: responseData?.severityScore ?? "",
+        suggestedDepartment: responseData?.suggestedDepartment ?? "",
+        description: responseData?.description ?? form.description.trim(),
+      });
+      setStage("review");
+    } catch (err: unknown) {
+      clearTimeout(abortTimer);
+      previewAbortRef.current = null;
+
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      // Network-level failure or timeout — still go to review with original fields
+      setWebhookFailed(true);
+      setWebhookErrorCode(isAbort ? "TIMEOUT" : "NETWORK_ERROR");
+      setAiFields({
+        imageUrl: null,
+        category: form.category,
+        predictedIssueType: "",
+        severityScore: "",
+        suggestedDepartment: "",
+        description: form.description.trim(),
+      });
+      setStage("review");
+    }
+  }
+
+  // Step 2: Confirm and save the issue to the DB
+  async function handleConfirm() {
+    if (!aiFields) return;
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const token = await getToken();
+      const gps = gpsCoordsRef.current;
+
+      const payload: Record<string, unknown> = {
+        title: form.title.trim(),
+        description: aiFields.description,
+        category: aiFields.category || form.category || null,
+        location: form.location.trim() || null,
+        imageUrl: aiFields.imageUrl,
+        predictedIssueType: aiFields.predictedIssueType || null,
+        severityScore: aiFields.severityScore !== "" ? aiFields.severityScore : null,
+        suggestedDepartment: aiFields.suggestedDepartment || null,
+        lat: gps?.lat ?? null,
+        lng: gps?.lng ?? null,
+      };
+
+      const res = await fetch(`${BACKEND_URL}/api/issues`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -134,15 +301,20 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         throw new Error(data.message || `Server error (${res.status})`);
       }
 
-      // Reset
+      // Full reset
       setForm({ title: "", description: "", category: "", location: "" });
       removeImage();
       resetGeo();
+      setAiFields(null);
       setExpanded(false);
+      setStage("form");
+      gpsCoordsRef.current = null;
       onSuccess?.();
     } catch (err: unknown) {
       setSubmitError(
-        err instanceof Error ? err.message : "Failed to submit issue. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Failed to submit issue. Please try again."
       );
     } finally {
       setSubmitting(false);
@@ -150,12 +322,23 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   }
 
   function handleCancel() {
+    // Abort any in-flight preview request
+    if (previewAbortRef.current) {
+      previewAbortRef.current.abort();
+      previewAbortRef.current = null;
+    }
     setForm({ title: "", description: "", category: "", location: "" });
     removeImage();
-    resetGeo();
+    setPickedLocation(null);
     setErrors({});
     setSubmitError(null);
+    setAiFields(null);
+    setStage("form");
     setExpanded(false);
+    setWebhookFailed(false);
+    setWebhookErrorCode(null);
+    setAnalysisTimedOut(false);
+    gpsCoordsRef.current = null;
   }
 
   return (
@@ -171,7 +354,218 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
         </button>
+      ) : stage === "analyzing" ? (
+        /* ── Loading / Analyzing state ── */
+        <div className="flex flex-col items-center justify-center gap-5 p-10 text-center">
+          <div className="relative">
+            {/* Outer ring */}
+            <div className="h-16 w-16 rounded-full border-4 border-primary/20" />
+            {/* Spinning arc */}
+            <Loader2 className="absolute inset-0 m-auto h-9 w-9 animate-spin text-primary" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">
+              {analysisTimedOut ? "Still waiting for AI…" : "Analysing your issue…"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {analysisTimedOut
+                ? "The AI is taking longer than expected. Hang tight or cancel and retry."
+                : "Our AI is classifying and enhancing your report. This may take up to 90 seconds."}
+            </p>
+            {elapsedSeconds > 0 && (
+              <p className="text-xs tabular-nums text-muted-foreground/70">
+                {elapsedSeconds}s elapsed
+              </p>
+            )}
+          </div>
+          {/* Let users escape if the AI truly stalls */}
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="mt-1 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : stage === "review" && aiFields ? (
+        /* ── Review / Edit AI fields ── */
+        <div className="p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="text-base font-semibold">Review AI Analysis</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The fields below were filled in by AI. Edit them if needed, then confirm to post.
+          </p>
+
+          {webhookFailed && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-700 dark:bg-amber-900/20">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                {webhookErrorCode === "TIMEOUT"
+                  ? "AI analysis timed out. Please review and fill in the fields below before posting."
+                  : webhookErrorCode === "EMPTY_RESPONSE"
+                    ? "AI returned no data. Please review and fill in the fields below."
+                    : "AI analysis was unavailable. Please review and fill in the fields below before posting."}
+              </p>
+            </div>
+          )}
+
+          {/* Title (read-only) */}
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Title</label>
+            <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              {form.title}
+            </p>
+          </div>
+
+          {/* AI-refined Description (editable) */}
+          <div className="space-y-1">
+            <label htmlFor="ai-description" className="text-sm font-medium flex items-center gap-1.5">
+              Description
+              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI refined</span>
+            </label>
+            <textarea
+              id="ai-description"
+              name="description"
+              value={aiFields.description}
+              onChange={handleAiFieldChange}
+              rows={4}
+              className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          {/* Category + Issue Type */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label htmlFor="ai-category" className="text-sm font-medium flex items-center gap-1.5">
+                Category
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+              </label>
+              <select
+                id="ai-category"
+                name="category"
+                value={aiFields.category}
+                onChange={handleAiFieldChange}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">Select category…</option>
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="ai-predictedIssueType" className="text-sm font-medium flex items-center gap-1.5">
+                Issue Type
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+              </label>
+              <input
+                id="ai-predictedIssueType"
+                name="predictedIssueType"
+                value={aiFields.predictedIssueType}
+                onChange={handleAiFieldChange}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          </div>
+
+          {/* Severity + Department */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label htmlFor="ai-severityScore" className="text-sm font-medium flex items-center gap-1.5">
+                Severity Score <span className="text-muted-foreground font-normal">(1–10)</span>
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+              </label>
+              <input
+                id="ai-severityScore"
+                name="severityScore"
+                type="number"
+                min={1}
+                max={10}
+                value={aiFields.severityScore}
+                onChange={handleAiFieldChange}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="ai-suggestedDepartment" className="text-sm font-medium flex items-center gap-1.5">
+                Department
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+              </label>
+              <select
+                id="ai-suggestedDepartment"
+                name="suggestedDepartment"
+                value={aiFields.suggestedDepartment}
+                onChange={handleAiFieldChange}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">Select department…</option>
+                {DEPARTMENTS.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Uploaded image preview (if any) */}
+          {aiFields.imageUrl && (
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Uploaded Photo</label>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={aiFields.imageUrl}
+                alt="Uploaded"
+                className="h-40 w-full rounded-lg border border-border object-cover"
+              />
+            </div>
+          )}
+
+          {submitError && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+              {submitError}
+            </p>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-between gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => { setStage("form"); setSubmitError(null); }}
+              disabled={submitting}
+              className="flex items-center gap-1"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleCancel}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleConfirm}
+                disabled={submitting}
+              >
+                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {submitting ? "Posting…" : "Confirm & Post"}
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : (
+        /* ── Original form ── */
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <h2 className="text-base font-semibold">Report an Issue</h2>
 
@@ -188,27 +582,43 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               placeholder="e.g. Broken streetlight on Main St"
               className={cn(
                 "w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/30",
-                errors.title ? "border-red-400 focus:ring-red-200" : "border-border"
+                errors.title
+                  ? "border-red-400 focus:ring-red-200"
+                  : "border-border"
               )}
             />
-            {errors.title && <p className="text-xs text-red-500">{errors.title}</p>}
+            {errors.title && (
+              <p className="text-xs text-red-500">{errors.title}</p>
+            )}
           </div>
 
-          {/* Description */}
-          <div className="space-y-1">
+          {/* Description + STT button */}
+          <div className="space-y-1.5">
             <label htmlFor="description" className="text-sm font-medium">
               Description <span className="text-red-500">*</span>
             </label>
+
+            {/* STT controls row — language dropdown + mic button */}
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <span className="text-xs text-muted-foreground shrink-0">🎙️ Voice input:</span>
+              <SpeechToTextButton
+                onTranscript={handleTranscript}
+                showLanguageSelector
+              />
+            </div>
+
             <textarea
               id="description"
               name="description"
               value={form.description}
               onChange={handleChange}
               rows={3}
-              placeholder="Describe the issue in detail…"
+              placeholder="Describe the issue in detail… or use voice input above 🎙️"
               className={cn(
                 "w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/30",
-                errors.description ? "border-red-400 focus:ring-red-200" : "border-border"
+                errors.description
+                  ? "border-red-400 focus:ring-red-200"
+                  : "border-border"
               )}
             />
             {errors.description && (
@@ -216,7 +626,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             )}
           </div>
 
-          {/* Category + Location */}
+          {/* Category + Location text */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <label htmlFor="category" className="text-sm font-medium">
@@ -240,7 +650,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
             <div className="space-y-1">
               <label htmlFor="location" className="text-sm font-medium">
-                Location
+                Location (text)
               </label>
               <input
                 id="location"
@@ -253,7 +663,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             </div>
           </div>
 
-          {/* ── GPS Location Capture ── */}
+          {/* GPS Location Capture */}
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
@@ -291,8 +701,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                   )}
                 </div>
               </div>
-
-              {/* Retry button */}
               {(geoStatus === "denied" || geoStatus === "timeout" || geoStatus === "error" || geoStatus === "unavailable") && (
                 <button
                   type="button"
@@ -313,11 +721,17 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                 </button>
               )}
             </div>
+            <LocationPicker
+              value={pickedLocation}
+              onChange={setPickedLocation}
+            />
           </div>
 
           {/* Image upload */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Photo (optional)</label>
+            <label className="text-sm font-medium">
+              Photo <span className="text-red-500">*</span>
+            </label>
             {imagePreview ? (
               <div className="relative w-full overflow-hidden rounded-lg border border-border">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -338,11 +752,19 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border py-6 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:border-primary/40"
+                className={cn(
+                  "flex w-full items-center justify-center gap-2 rounded-lg border border-dashed py-6 text-sm transition-colors hover:bg-muted/50",
+                  errors.image
+                    ? "border-red-400 text-red-500 hover:border-red-400"
+                    : "border-border text-muted-foreground hover:border-primary/40"
+                )}
               >
                 <ImagePlus className="h-5 w-5" />
-                Click to upload image
+                Click to upload photo
               </button>
+            )}
+            {errors.image && (
+              <p className="text-xs text-red-500">{errors.image}</p>
             )}
             <input
               ref={fileRef}
@@ -366,13 +788,12 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               variant="ghost"
               size="sm"
               onClick={handleCancel}
-              disabled={submitting}
             >
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={submitting}>
-              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {submitting ? "Submitting…" : "Submit Issue"}
+            <Button type="submit" size="sm" className="flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5" />
+              Analyse &amp; Submit
             </Button>
           </div>
         </form>
@@ -380,4 +801,3 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     </div>
   );
 }
-

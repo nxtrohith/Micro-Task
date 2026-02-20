@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LocationPicker, type PickedLocation } from "@/components/location-picker";
 import { SpeechToTextButton } from "@/components/speech-to-text-button";
+import { useGeolocation } from "@/lib/hooks/use-geolocation";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
@@ -50,6 +51,7 @@ interface FormState {
 interface FormErrors {
   title?: string;
   description?: string;
+  image?: string;
 }
 
 interface AIFields {
@@ -95,6 +97,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { status: geoStatus, coords, requestLocation, reset: resetGeo } = useGeolocation();
   // Store GPS coords captured during analyze step
   const gpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   // AbortController for the in-flight /preview fetch
@@ -126,6 +129,16 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   ) {
     const { name, value } = e.target;
     setAiFields((f) => (f ? { ...f, [name]: value } : f));
+  }
+
+  function handleTranscript(text: string) {
+    setForm((f) => ({
+      ...f,
+      description: f.description ? `${f.description} ${text}` : text,
+    }));
+    if (errors.description) {
+      setErrors((e) => ({ ...e, description: undefined }));
+    }
   }
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {

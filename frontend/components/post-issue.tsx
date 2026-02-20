@@ -2,10 +2,11 @@
 
 import { useState, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { ImagePlus, X, ChevronDown, Loader2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ImagePlus, X, ChevronDown, Loader2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useGeolocation } from "@/lib/hooks/use-geolocation";
+import { LocationPicker, type PickedLocation } from "@/components/location-picker";
+import { SpeechToTextButton } from "@/components/speech-to-text-button";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
@@ -29,6 +30,7 @@ interface FormState {
 interface FormErrors {
   title?: string;
   description?: string;
+  image?: string;
 }
 
 interface PostIssueProps {
@@ -37,7 +39,6 @@ interface PostIssueProps {
 
 export function PostIssue({ onSuccess }: PostIssueProps) {
   const { getToken } = useAuth();
-  const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
 
   const [expanded, setExpanded] = useState(false);
   const [form, setForm] = useState<FormState>({
@@ -49,11 +50,16 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [errors, setErrors] = useState<FormErrors>({});
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [pickedLocation, setPickedLocation] = useState<PickedLocation | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
+  function handleChange(
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
     if (errors[name as keyof FormErrors]) {
@@ -92,6 +98,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     if (!form.description.trim() || form.description.trim().length < 10) {
       newErrors.description = "Description must be at least 10 characters.";
     }
+    if (!image) {
+      newErrors.image = "A photo is required to submit an issue.";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
@@ -104,12 +113,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     setSubmitError(null);
 
     try {
-      // Auto-request location if not yet captured (silent — won't block submission)
-      let gpsCoords = coords;
-      if (geoStatus === "idle") {
-        gpsCoords = await requestLocation();
-      }
-
       const token = await getToken();
       const body = new FormData();
       body.append("title", form.title.trim());
@@ -117,10 +120,15 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       if (form.category) body.append("category", form.category);
       if (form.location) body.append("location", form.location.trim());
       if (image) body.append("image", image);
-      // Attach GPS coordinates if available
-      if (gpsCoords) {
-        body.append("lat", gpsCoords.lat.toString());
-        body.append("lng", gpsCoords.lng.toString());
+
+      // Attach GPS / map pin coordinates if available
+      if (pickedLocation) {
+        body.append("lat", pickedLocation.lat.toString());
+        body.append("lng", pickedLocation.lng.toString());
+        // Auto-fill location text from reverse-geocode if user left it blank
+        if (!form.location && pickedLocation.address) {
+          body.append("location", pickedLocation.address);
+        }
       }
 
       const res = await fetch(`${BACKEND_URL}/api/issues`, {
@@ -137,12 +145,14 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       // Reset
       setForm({ title: "", description: "", category: "", location: "" });
       removeImage();
-      resetGeo();
+      setPickedLocation(null);
       setExpanded(false);
       onSuccess?.();
     } catch (err: unknown) {
       setSubmitError(
-        err instanceof Error ? err.message : "Failed to submit issue. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Failed to submit issue. Please try again."
       );
     } finally {
       setSubmitting(false);
@@ -152,10 +162,21 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   function handleCancel() {
     setForm({ title: "", description: "", category: "", location: "" });
     removeImage();
-    resetGeo();
+    setPickedLocation(null);
     setErrors({});
     setSubmitError(null);
     setExpanded(false);
+  }
+
+  // Append STT transcript to description
+  function handleTranscript(transcript: string) {
+    setForm((f) => ({
+      ...f,
+      description: f.description
+        ? `${f.description} ${transcript}`
+        : transcript,
+    }));
+    if (errors.description) setErrors((e) => ({ ...e, description: undefined }));
   }
 
   return (
@@ -188,27 +209,43 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               placeholder="e.g. Broken streetlight on Main St"
               className={cn(
                 "w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/30",
-                errors.title ? "border-red-400 focus:ring-red-200" : "border-border"
+                errors.title
+                  ? "border-red-400 focus:ring-red-200"
+                  : "border-border"
               )}
             />
-            {errors.title && <p className="text-xs text-red-500">{errors.title}</p>}
+            {errors.title && (
+              <p className="text-xs text-red-500">{errors.title}</p>
+            )}
           </div>
 
-          {/* Description */}
-          <div className="space-y-1">
+          {/* Description + STT button */}
+          <div className="space-y-1.5">
             <label htmlFor="description" className="text-sm font-medium">
               Description <span className="text-red-500">*</span>
             </label>
+
+            {/* STT controls row — language dropdown + mic button */}
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <span className="text-xs text-muted-foreground shrink-0">🎙️ Voice input:</span>
+              <SpeechToTextButton
+                onTranscript={handleTranscript}
+                showLanguageSelector
+              />
+            </div>
+
             <textarea
               id="description"
               name="description"
               value={form.description}
               onChange={handleChange}
               rows={3}
-              placeholder="Describe the issue in detail…"
+              placeholder="Describe the issue in detail… or use voice input above 🎙️"
               className={cn(
                 "w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/30",
-                errors.description ? "border-red-400 focus:ring-red-200" : "border-border"
+                errors.description
+                  ? "border-red-400 focus:ring-red-200"
+                  : "border-border"
               )}
             />
             {errors.description && (
@@ -216,7 +253,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             )}
           </div>
 
-          {/* Category + Location */}
+          {/* Category + Location text */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <label htmlFor="category" className="text-sm font-medium">
@@ -240,7 +277,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
             <div className="space-y-1">
               <label htmlFor="location" className="text-sm font-medium">
-                Location
+                Location (text)
               </label>
               <input
                 id="location"
@@ -253,71 +290,28 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             </div>
           </div>
 
-          {/* ── GPS Location Capture ── */}
-          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  {geoStatus === "idle" && (
-                    <p className="text-xs text-muted-foreground">
-                      GPS coordinates will be captured on submit, or&nbsp;
-                      <button
-                        type="button"
-                        onClick={() => requestLocation()}
-                        className="text-primary underline underline-offset-2 hover:no-underline"
-                      >
-                        capture now
-                      </button>
-                    </p>
-                  )}
-                  {geoStatus === "loading" && (
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Getting your location…
-                    </p>
-                  )}
-                  {geoStatus === "success" && coords && (
-                    <p className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      GPS captured — {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
-                    </p>
-                  )}
-                  {(geoStatus === "denied" || geoStatus === "unavailable" || geoStatus === "timeout" || geoStatus === "error") && (
-                    <p className="flex items-center gap-1.5 text-xs text-orange-600 dark:text-orange-400">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{geoError}</span>
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Retry button */}
-              {(geoStatus === "denied" || geoStatus === "timeout" || geoStatus === "error" || geoStatus === "unavailable") && (
-                <button
-                  type="button"
-                  onClick={() => requestLocation()}
-                  className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Retry
-                </button>
-              )}
-              {geoStatus === "success" && (
-                <button
-                  type="button"
-                  onClick={resetGeo}
-                  className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                  title="Clear location"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
+          {/* ── Location Picker (GPS + Map Pin) ── */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+              <label className="text-sm font-medium">
+                GPS Coordinates{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (optional — helps place issue on map)
+                </span>
+              </label>
             </div>
+            <LocationPicker
+              value={pickedLocation}
+              onChange={setPickedLocation}
+            />
           </div>
 
           {/* Image upload */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Photo (optional)</label>
+            <label className="text-sm font-medium">
+              Photo <span className="text-red-500">*</span>
+            </label>
             {imagePreview ? (
               <div className="relative w-full overflow-hidden rounded-lg border border-border">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -338,11 +332,19 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border py-6 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:border-primary/40"
+                className={cn(
+                  "flex w-full items-center justify-center gap-2 rounded-lg border border-dashed py-6 text-sm transition-colors hover:bg-muted/50",
+                  errors.image
+                    ? "border-red-400 text-red-500 hover:border-red-400"
+                    : "border-border text-muted-foreground hover:border-primary/40"
+                )}
               >
                 <ImagePlus className="h-5 w-5" />
-                Click to upload image
+                Click to upload photo
               </button>
+            )}
+            {errors.image && (
+              <p className="text-xs text-red-500">{errors.image}</p>
             )}
             <input
               ref={fileRef}

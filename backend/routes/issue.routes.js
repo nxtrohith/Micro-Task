@@ -5,6 +5,7 @@ const upload = require('../middleware/upload');
 const { requireAuth, getAuth } = require('../middleware/auth');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 const { getDB } = require('../config/db');
+const { awardPoints, resolutionPoints } = require('../utils/points');
 
 const router = express.Router();
 
@@ -244,6 +245,43 @@ router.post('/check-duplicate', async (req, res) => {
 });
 
 
+// ---------- GET /api/issues/pending-verifications  ----------
+// Returns resolved issues awaiting resident verification (must be before /:id)
+router.get('/pending-verifications', async (req, res) => {
+  try {
+    const db = getDB();
+    const issues = await db
+      .collection('issues')
+      .aggregate([
+        { $match: { status: 'resolved', verificationStatus: 'pending_verification' } },
+        { $sort: { updatedAt: -1 } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'reportedBy',
+            foreignField: 'clerkUserId',
+            as: '_reporter',
+          },
+        },
+        {
+          $addFields: {
+            reporterName: {
+              $ifNull: [{ $arrayElemAt: ['$_reporter.fullName', 0] }, 'Anonymous'],
+            },
+            reporterImage: { $arrayElemAt: ['$_reporter.imageUrl', 0] },
+          },
+        },
+        { $project: { _reporter: 0 } },
+      ])
+      .toArray();
+
+    res.json({ success: true, data: issues });
+  } catch (err) {
+    console.error('Error fetching pending verifications:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // Fetch all issues (newest first) with reporter name joined from users
 router.get('/', async (req, res) => {
   try {
@@ -413,6 +451,103 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+const VERIFICATION_THRESHOLD = 3; // upvotes required to mark resolution verified
+
+// ---------- PATCH /api/issues/:id/resolve  ----------
+// Admin: resolve an issue with mandatory proof image upload
+router.patch('/:id/resolve', requireAuth(), upload.single('verificationImage'), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const db = getDB();
+
+    const caller = await db.collection('users').findOne({ clerkUserId });
+    if (!caller || caller.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Forbidden: Admin only' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Verification proof image is required to resolve an issue' });
+    }
+
+    const issueId = new ObjectId(req.params.id);
+    const issue = await db.collection('issues').findOne({ _id: issueId });
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    const uploadResult = await uploadToCloudinary(req.file.buffer, 'micro-task-verifications');
+
+    const updates = {
+      status: 'resolved',
+      verificationImageUrl: uploadResult.secure_url,
+      verificationStatus: 'pending_verification',
+      verificationUpvotes: [],
+      updatedAt: new Date(),
+    };
+
+    const result = await db.collection('issues').findOneAndUpdate(
+      { _id: issueId },
+      { $set: updates },
+      { returnDocument: 'after' }
+    );
+
+    if (result && result.reportedBy) {
+      const pts = resolutionPoints(result.severityScore);
+      await awardPoints(db, result.reportedBy, pts);
+      console.log(`[POINTS] +${pts} awarded to ${result.reportedBy} for issue ${issueId}`);
+    }
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('Error resolving issue with proof:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ---------- PATCH /api/issues/:id/verify-upvote  ----------
+// Resident: upvote admin's resolution proof (one-way — no un-vote)
+router.patch('/:id/verify-upvote', requireAuth(), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const db = getDB();
+    const issueId = new ObjectId(req.params.id);
+
+    const issue = await db.collection('issues').findOne({ _id: issueId });
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+    if (issue.status !== 'resolved') {
+      return res.status(400).json({ success: false, message: 'Issue is not resolved yet' });
+    }
+
+    const existingUpvotes = Array.isArray(issue.verificationUpvotes) ? issue.verificationUpvotes : [];
+    if (existingUpvotes.includes(clerkUserId)) {
+      return res.status(400).json({ success: false, message: 'You have already verified this resolution' });
+    }
+
+    const newUpvotes = [...existingUpvotes, clerkUserId];
+    const verificationStatus = newUpvotes.length >= VERIFICATION_THRESHOLD ? 'verified' : 'pending_verification';
+
+    await db.collection('issues').updateOne(
+      { _id: issueId },
+      { $addToSet: { verificationUpvotes: clerkUserId }, $set: { verificationStatus, updatedAt: new Date() } }
+    );
+
+    res.json({
+      success: true,
+      data: {
+        verificationUpvotes: newUpvotes,
+        verificationUpvoteCount: newUpvotes.length,
+        verificationStatus,
+        hasVerified: true,
+      },
+    });
+  } catch (err) {
+    console.error('Error verify-upvoting:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ---------- PATCH /api/issues/:id  ----------
 // Admin: update issue fields (status, severity, department, etc.)
 router.patch('/:id', requireAuth(), async (req, res) => {
@@ -453,6 +588,17 @@ router.patch('/:id', requireAuth(), async (req, res) => {
 
     if (!result) {
       return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    // ── Award points to reporter when an issue is marked resolved ────────
+    if (updates.status === 'resolved') {
+      const before = await db.collection('issues').findOne({ _id: issueId });
+      const wasAlreadyResolved = before?.status === 'resolved';
+      if (!wasAlreadyResolved && result.reportedBy) {
+        const pts = resolutionPoints(result.severityScore);
+        await awardPoints(db, result.reportedBy, pts);
+        console.log(`[POINTS] +${pts} awarded to ${result.reportedBy} for issue ${issueId}`);
+      }
     }
 
     res.json({ success: true, data: result });

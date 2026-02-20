@@ -43,12 +43,20 @@ router.post('/sync', requireAuth(), async (req, res) => {
         $setOnInsert: {
           clerkUserId,
           role: 'resident',
+          points: 0,
+          designation: 'Newcomer',
           isActive: true,
           phone: null,
           createdAt: new Date(),
         },
       },
       { upsert: true }
+    );
+
+    // Backfill points/designation for users created before the rewards system
+    await db.collection('users').updateOne(
+      { clerkUserId, points: { $exists: false } },
+      { $set: { points: 0, designation: 'Newcomer' } }
     );
 
     // Fetch the upserted / updated document

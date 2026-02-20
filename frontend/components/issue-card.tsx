@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { formatDistanceToNow } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import { MapPin, Tag, ChevronUp, Loader2, MessageSquare, User } from "lucide-react";
+import { MapPin, Tag, ChevronUp, Loader2, MessageSquare, User, ShieldCheck, ShieldAlert } from "lucide-react";
 import { CommentsSection } from "@/components/comments-section";
 import { ImageLightbox, ExpandHint } from "@/components/image-lightbox";
 
@@ -24,6 +24,9 @@ export interface Issue {
   reporterImage?: string;
   createdAt: string;
   coordinates?: { lat: number; lng: number };
+  verificationImageUrl?: string;
+  verificationStatus?: "pending_verification" | "verified";
+  verificationUpvotes?: string[];
 }
 
 const STATUS_STYLES: Record<Issue["status"], string> = {
@@ -51,6 +54,16 @@ export function IssueCard({ issue }: { issue: Issue }) {
   const [showComments, setShowComments] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
+  const [verificationUpvoteCount, setVerificationUpvoteCount] = useState(
+    issue.verificationUpvotes?.length ?? 0
+  );
+  const [hasVerified, setHasVerified] = useState(
+    !!userId && Array.isArray(issue.verificationUpvotes) && issue.verificationUpvotes.includes(userId)
+  );
+  const [verificationStatus, setVerificationStatus] = useState(issue.verificationStatus);
+  const [verifyPending, setVerifyPending] = useState(false);
+  const [verifyLightboxOpen, setVerifyLightboxOpen] = useState(false);
+
   async function handleUpvote() {
     if (!userId || pending) return;
     const next = !hasUpvoted;
@@ -72,6 +85,27 @@ export function IssueCard({ issue }: { issue: Issue }) {
       setUpvoteCount((c) => c + (next ? -1 : 1));
     } finally {
       setPending(false);
+    }
+  }
+
+  async function handleVerifyUpvote() {
+    if (!userId || verifyPending || hasVerified) return;
+    setVerifyPending(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BACKEND_URL}/api/issues/${issue._id}/verify-upvote`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed");
+      const json = await res.json();
+      setVerificationUpvoteCount(json.data.verificationUpvoteCount);
+      setHasVerified(true);
+      setVerificationStatus(json.data.verificationStatus);
+    } catch {
+      // silently fail
+    } finally {
+      setVerifyPending(false);
     }
   }
 
@@ -104,14 +138,28 @@ export function IssueCard({ issue }: { issue: Issue }) {
           <h3 className="font-semibold leading-snug text-foreground line-clamp-2">
             {issue.title}
           </h3>
-          <span
-            className={cn(
-              "shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium",
-              STATUS_STYLES[issue.status]
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                STATUS_STYLES[issue.status]
+              )}
+            >
+              {STATUS_LABELS[issue.status]}
+            </span>
+            {issue.status === "resolved" && verificationStatus === "pending_verification" && (
+              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                <ShieldAlert className="h-3 w-3" />
+                Yet to be Verified
+              </span>
             )}
-          >
-            {STATUS_LABELS[issue.status]}
-          </span>
+            {issue.status === "resolved" && verificationStatus === "verified" && (
+              <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                <ShieldCheck className="h-3 w-3" />
+                Verified Resolution ✅
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Description */}
@@ -136,6 +184,61 @@ export function IssueCard({ issue }: { issue: Issue }) {
               />
               <ExpandHint />
             </button>
+          </div>
+        )}
+
+        {/* Verification proof section (shown when resolved) */}
+        {issue.status === "resolved" && issue.verificationImageUrl && (
+          <div className="mt-3 rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Admin Verification Proof
+            </p>
+            <button
+              type="button"
+              onClick={() => setVerifyLightboxOpen(true)}
+              className="group/img relative block w-full cursor-zoom-in overflow-hidden rounded-md border border-border/40"
+              aria-label="View verification proof"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={issue.verificationImageUrl}
+                alt="Verification proof"
+                className="h-40 w-full object-cover transition-transform group-hover/img:scale-[1.02]"
+              />
+              <ExpandHint />
+            </button>
+            {verificationStatus === "pending_verification" && (
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {verificationUpvoteCount} resident{verificationUpvoteCount !== 1 ? "s" : ""} verified
+                </p>
+                <button
+                  onClick={handleVerifyUpvote}
+                  disabled={!userId || verifyPending || hasVerified}
+                  title={
+                    !userId
+                      ? "Sign in to verify"
+                      : hasVerified
+                      ? "Already verified"
+                      : "Confirm this resolution"
+                  }
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                    hasVerified
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 cursor-default"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90",
+                    (!userId || verifyPending) && "opacity-60 cursor-not-allowed"
+                  )}
+                >
+                  {verifyPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="h-3 w-3" />
+                  )}
+                  {hasVerified ? "Verified" : "Verify Resolution"}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -206,6 +309,15 @@ export function IssueCard({ issue }: { issue: Issue }) {
           src={issue.imageUrl}
           alt={issue.title}
           onClose={() => setLightboxOpen(false)}
+        />
+      )}
+
+      {/* Verification proof lightbox */}
+      {verifyLightboxOpen && issue.verificationImageUrl && (
+        <ImageLightbox
+          src={issue.verificationImageUrl}
+          alt="Verification proof"
+          onClose={() => setVerifyLightboxOpen(false)}
         />
       )}
     </article>

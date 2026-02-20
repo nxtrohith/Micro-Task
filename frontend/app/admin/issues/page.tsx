@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useAuth } from "@clerk/nextjs";
 import {
   Search,
   Pencil,
@@ -19,6 +18,7 @@ import {
   IssueEditModal,
   type AdminIssue,
 } from "@/components/admin/issue-edit-modal";
+import { ResolveWithProofModal } from "@/components/admin/resolve-with-proof-modal";
 
 const BACKEND_URL = (
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500"
@@ -61,8 +61,6 @@ const DEPARTMENTS = [
 
 
 export default function AdminIssuesPage() {
-  const { getToken } = useAuth();
-
   const [issues, setIssues] = useState<AdminIssue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,8 +74,8 @@ export default function AdminIssuesPage() {
   // Edit modal
   const [editingIssue, setEditingIssue] = useState<AdminIssue | null>(null);
 
-  // Resolving
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // Resolve-with-proof modal
+  const [resolvingIssue, setResolvingIssue] = useState<AdminIssue | null>(null);
 
   const fetchIssues = useCallback(async () => {
     setLoading(true);
@@ -106,31 +104,6 @@ export default function AdminIssuesPage() {
   useEffect(() => {
     fetchIssues();
   }, [fetchIssues]);
-
-  async function handleMarkResolved(issue: AdminIssue) {
-    if (resolvingId) return;
-    setResolvingId(issue._id);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BACKEND_URL}/api/issues/${issue._id}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ status: "resolved" }),
-      });
-      if (!res.ok) throw new Error("Failed to resolve");
-      const json = await res.json();
-      setIssues((prev) =>
-        prev.map((i) => (i._id === issue._id ? (json.data as AdminIssue) : i))
-      );
-    } catch {
-      // silently fail
-    } finally {
-      setResolvingId(null);
-    }
-  }
 
   function handleIssueSaved(updated: AdminIssue) {
     setIssues((prev) =>
@@ -478,16 +451,11 @@ export default function AdminIssuesPage() {
                               {/* Mark Resolved */}
                               {issue.status !== "resolved" && (
                                 <button
-                                  onClick={() => handleMarkResolved(issue)}
-                                  disabled={resolvingId === issue._id}
-                                  title="Mark as resolved"
-                                  className="flex items-center gap-1.5 rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60 transition-colors"
+                                  onClick={() => setResolvingIssue(issue)}
+                                  title="Resolve with proof"
+                                  className="flex items-center gap-1.5 rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-green-700 transition-colors"
                                 >
-                                  {resolvingId === issue._id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <CheckCircle2 className="h-3 w-3" />
-                                  )}
+                                  <CheckCircle2 className="h-3 w-3" />
                                   <span className="hidden sm:inline">
                                     Resolve
                                   </span>
@@ -512,6 +480,15 @@ export default function AdminIssuesPage() {
           issue={editingIssue}
           onClose={() => setEditingIssue(null)}
           onSaved={handleIssueSaved}
+        />
+      )}
+
+      {/* ── Resolve with Proof Modal ── */}
+      {resolvingIssue && (
+        <ResolveWithProofModal
+          issue={resolvingIssue}
+          onClose={() => setResolvingIssue(null)}
+          onResolved={handleIssueSaved}
         />
       )}
     </div>

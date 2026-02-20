@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const issueSchema = new mongoose.Schema(
   {
@@ -99,4 +99,4 @@ issueSchema.pre("save", function (next) {
 });
 
 const Issue = mongoose.model("Issue", issueSchema);
-export default Issue;
+module.exports = Issue;

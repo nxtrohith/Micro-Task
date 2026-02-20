@@ -6,7 +6,7 @@ import { IssueCard, type Issue } from "@/components/issue-card";
 import { Loader2, Inbox, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 export default function FeedPage() {
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -21,8 +21,9 @@ export default function FeedPage() {
       if (!res.ok) throw new Error(`Failed to load issues (${res.status})`);
       const json = await res.json();
       setIssues(json.data ?? []);
-    } catch (err: any) {
-      setError(err.message || "Something went wrong.");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Something went wrong.";
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { MapPin, Tag, ChevronUp, Loader2, MessageSquare, User } from "lucide-react";
 import { CommentsSection } from "@/components/comments-section";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 export interface Issue {
   _id: string;

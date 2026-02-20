@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { LocationPicker, type PickedLocation } from "@/components/location-picker";
 import { SpeechToTextButton } from "@/components/speech-to-text-button";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500";
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 const CATEGORIES = [
   "Infrastructure",

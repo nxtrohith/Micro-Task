@@ -124,4 +124,53 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// ---------- PATCH /api/issues/:id  ----------
+// Admin: update issue fields (status, severity, department, etc.)
+router.patch('/:id', requireAuth(), async (req, res) => {
+  try {
+    const { userId: clerkUserId } = getAuth(req);
+    const db = getDB();
+
+    // Verify the caller is an admin
+    const caller = await db.collection('users').findOne({ clerkUserId });
+    if (!caller || caller.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Forbidden: Admin only' });
+    }
+
+    const issueId = new ObjectId(req.params.id);
+    const allowedFields = [
+      'status', 'severityScore', 'suggestedDepartment',
+      'title', 'description', 'location', 'category', 'predictedIssueType',
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields to update' });
+    }
+
+    updates.updatedAt = new Date();
+
+    const result = await db.collection('issues').findOneAndUpdate(
+      { _id: issueId },
+      { $set: updates },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('Error updating issue:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;

@@ -39,9 +39,15 @@ app.get('/api/test-db', async (req, res) => {
 // Connect to DB then start server
 connectDB()
   .then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
+
+    // Extend timeouts so long-running n8n webhook calls (up to 90 s)
+    // don't get dropped by Node's default 5-second keep-alive timeout,
+    // which would cause the browser to receive a 502 Bad Gateway.
+    server.keepAliveTimeout = 120_000;  // 120 s
+    server.headersTimeout = 125_000;  // must be > keepAliveTimeout
   })
   .catch((err) => {
     console.error('Failed to connect to MongoDB:', err);

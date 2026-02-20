@@ -1,3 +1,4 @@
+import Image from "next/image";
 import {
   MapPin,
   ClipboardCheck,
@@ -35,14 +36,15 @@ function Hero() {
 /* ─── Hero Illustration Placeholder ─── */
 function HeroImage() {
   return (
-    <section className="flex justify-center px-6 pb-20">
-      <div className="flex h-72 w-full max-w-4xl items-center justify-center rounded-2xl bg-muted sm:h-96">
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-          <MapPin className="h-16 w-16 stroke-[1.2]" />
-          <span className="text-sm font-medium tracking-wide uppercase">
-            Civic Micro-Tasks
-          </span>
-        </div>
+    <section className="flex justify-center px-6 pb-8">
+      <div className="relative h-72 w-full max-w-4xl overflow-hidden sm:h-96">
+        <Image
+          src="/imgs/civic.jpeg"
+          alt="Civic micro-tasks"
+          fill
+          className="object-contain"
+          priority
+        />
       </div>
     </section>
   );
@@ -51,12 +53,11 @@ function HeroImage() {
 /* ─── Trusted By / Partner Logos ─── */
 function TrustedBy() {
   const partners = [
-    { icon: MapPin, label: "Local Govt" },
-    { icon: Users, label: "Communities" },
-    { icon: ClipboardCheck, label: "NGOs" },
-    { icon: Zap, label: "Volunteers" },
-    { icon: BarChart3, label: "Civic Bodies" },
   ];
+
+  if (partners.length === 0) {
+    return null;
+  }
 
   return (
     <section className="border-t border-border/40 py-10">
@@ -80,11 +81,15 @@ function FeatureRow({
   heading,
   description,
   icon: Icon,
+  imageSrc,
+  imageAlt,
   reversed = false,
 }: {
   heading: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
+  imageSrc?: string;
+  imageAlt?: string;
   reversed?: boolean;
 }) {
   return (
@@ -99,10 +104,22 @@ function FeatureRow({
         <p className="text-muted-foreground leading-relaxed">{description}</p>
       </div>
 
-      {/* Placeholder Image */}
-      <div className="flex h-56 w-full flex-1 items-center justify-center rounded-2xl bg-muted md:h-64">
-        <Icon className="h-14 w-14 text-muted-foreground/60 stroke-[1.2]" />
-      </div>
+      {/* Image / Placeholder */}
+      {imageSrc ? (
+        <div className="w-full flex-1">
+          <Image
+            src={imageSrc}
+            alt={imageAlt ?? heading}
+            width={1200}
+            height={800}
+            className="h-auto w-full max-h-80 rounded-2xl object-contain"
+          />
+        </div>
+      ) : (
+        <div className="flex h-64 w-full flex-1 items-center justify-center rounded-2xl bg-muted md:h-72">
+          <Icon className="h-14 w-14 text-muted-foreground/60 stroke-[1.2]" />
+        </div>
+      )}
     </div>
   );
 }
@@ -110,22 +127,28 @@ function FeatureRow({
 /* ─── Features Section ─── */
 function Features() {
   return (
-    <section id="features" className="mx-auto max-w-5xl space-y-24 px-6 py-24">
+    <section id="features" className="mx-auto max-w-5xl space-y-24 px-6 pt-8 pb-24">
       <FeatureRow
         heading="Quick micro-tasks."
         description="View and pick up civic tasks near you — report broken streetlights, verify public notices, or check local facilities. Each task takes just a few focused minutes."
         icon={ClipboardCheck}
+        imageSrc="/imgs/quick%20micro%20task.png"
+        imageAlt="Quick micro-tasks"
       />
       <FeatureRow
-        heading="Smart reminders."
-        description="Never miss a task deadline — get automatic alerts for new tasks nearby, follow-ups on your submissions, and upcoming community drives."
+        heading="One For Everything"
+        description="Stay organized and in control — discover tasks, track your progress, receive real-time updates, manage submissions, and participate in community initiatives all from a single, seamless platform."
         icon={Bell}
+        imageSrc="/imgs/1fe.jpeg"
+        imageAlt="One for everything"
         reversed
       />
       <FeatureRow
         heading="Community insights."
         description="Track your contributions with clear visual reports. See how your micro-actions add up to measurable improvements in your neighbourhood."
         icon={BarChart3}
+        imageSrc="/imgs/analy.jpeg"
+        imageAlt="Community insights"
       />
     </section>
   );
@@ -137,22 +160,22 @@ function HowItWorks() {
     {
       step: "01",
       title: "Sign in",
-      desc: "Authenticate with Google in one tap — no lengthy registrations.",
+      desc: "Register using your unique house number and log in to your community account — secure and simple.",
     },
     {
       step: "02",
-      title: "Pick a task",
-      desc: "Browse nearby micro-tasks posted by local civic bodies and communities.",
+      title: "Report an Issue",
+      desc: "Upload a photo, add the location and description, and select the category. Suggest the relevant department if needed.",
     },
     {
       step: "03",
-      title: "Complete & verify",
-      desc: "Upload a photo or report — AI-assisted validation ensures trust and accuracy.",
+      title: "AI Analysis & Community Support",
+      desc: "Our AI analyzes the issue and assigns a severity score. Residents can upvote and discuss the issue to help prioritize it.",
     },
     {
       step: "04",
-      title: "Earn impact",
-      desc: "See your contribution logged, tracked, and recognized in your community profile.",
+      title: "Admin Action & Resolution",
+      desc: "The admin reviews the issue, assigns the department, updates the status, and ensures it is resolved. Progress is transparent and visible to everyone.",
     },
   ];
 
@@ -170,7 +193,7 @@ function HowItWorks() {
           few taps.
         </p>
 
-        <div className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-14 grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-14">
           {steps.map((s) => (
             <div key={s.step} className="space-y-3">
               <span className="text-3xl font-extrabold text-muted-foreground/40">

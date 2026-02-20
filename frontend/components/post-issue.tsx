@@ -220,25 +220,27 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           </div>
 
           {/* Description + STT button */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label htmlFor="description" className="text-sm font-medium">
-                Description <span className="text-red-500">*</span>
-              </label>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-muted-foreground">
-                  Speak
-                </span>
-                <SpeechToTextButton onTranscript={handleTranscript} />
-              </div>
+          <div className="space-y-1.5">
+            <label htmlFor="description" className="text-sm font-medium">
+              Description <span className="text-red-500">*</span>
+            </label>
+
+            {/* STT controls row — language dropdown + mic button */}
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <span className="text-xs text-muted-foreground shrink-0">🎙️ Voice input:</span>
+              <SpeechToTextButton
+                onTranscript={handleTranscript}
+                showLanguageSelector
+              />
             </div>
+
             <textarea
               id="description"
               name="description"
               value={form.description}
               onChange={handleChange}
               rows={3}
-              placeholder="Describe the issue in detail… or use the mic 🎙️"
+              placeholder="Describe the issue in detail… or use voice input above 🎙️"
               className={cn(
                 "w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-primary/30",
                 errors.description

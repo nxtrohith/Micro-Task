@@ -6,7 +6,7 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-        <span className="text-xl font-extrabold tracking-tight">Civix.</span>
+        <span className=" font-bold text-5xl tracking-tight">Civix.</span>
 
         <div className="hidden items-center gap-8 md:flex">
           <nav className="flex items-center gap-8 text-sm font-medium text-muted-foreground">

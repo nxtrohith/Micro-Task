@@ -1,161 +1,146 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { Mic, MicOff, Square, Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSpeechToText } from "@/lib/hooks/use-speech-to-text";
 
-// Augment Window for the Web Speech API (not in all TS lib versions)
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    SpeechRecognition: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    webkitSpeechRecognition: any;
-  }
-}
+// ── Language options ──────────────────────────────────────────────────────
+export const LANGUAGES = [
+  { code: "en-IN", label: "English" },
+  { code: "hi-IN", label: "हिन्दी (Hindi)" },
+  { code: "te-IN", label: "తెలుగు (Telugu)" },
+  { code: "ta-IN", label: "தமிழ் (Tamil)" },
+  { code: "kn-IN", label: "ಕನ್ನಡ (Kannada)" },
+  { code: "ml-IN", label: "മലയാളം (Malayalam)" },
+  { code: "mr-IN", label: "मराठी (Marathi)" },
+  { code: "bn-IN", label: "বাংলা (Bengali)" },
+  { code: "gu-IN", label: "ગુજરાતી (Gujarati)" },
+  { code: "pa-IN", label: "ਪੰਜਾਬੀ (Punjabi)" },
+] as const;
 
-type STTState = "idle" | "listening" | "processing" | "unsupported";
+export type LanguageCode = (typeof LANGUAGES)[number]["code"];
 
+// ── Props ─────────────────────────────────────────────────────────────────
 interface SpeechToTextButtonProps {
-  /** Called with the accumulated transcript text */
+  /** Called with the final transcript string */
   onTranscript: (text: string) => void;
-  /** Optional className for the button */
+  /** BCP-47 language code (controlled externally or managed internally) */
+  languageCode?: LanguageCode;
+  /** Show the language dropdown inline */
+  showLanguageSelector?: boolean;
   className?: string;
-  /** aria-label / title */
-  label?: string;
 }
 
+// ── Component ─────────────────────────────────────────────────────────────
 export function SpeechToTextButton({
   onTranscript,
+  languageCode: externalLang,
+  showLanguageSelector = true,
   className,
-  label = "Speak to fill description",
 }: SpeechToTextButtonProps) {
-  const [state, setState] = useState<STTState>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const recognitionRef = useRef<ReturnType<typeof window.SpeechRecognition> | null>(null);
+  const [internalLang, setInternalLang] = useState<LanguageCode>("en-IN");
+  const lang = externalLang ?? internalLang;
 
-  // Check browser support on mount
-  useEffect(() => {
-    const SpeechRecognitionAPI =
-      typeof window !== "undefined"
-        ? window.SpeechRecognition || window.webkitSpeechRecognition
-        : null;
-    if (!SpeechRecognitionAPI) {
-      setState("unsupported");
-    }
-  }, []);
+  const { state, error, startRecording, stopRecording } = useSpeechToText(
+    onTranscript,
+    { languageCode: lang }
+  );
 
-  function startListening() {
-    const SpeechRecognitionAPI =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    const recognition = new SpeechRecognitionAPI();
-    recognition.lang = "en-IN"; // can be changed by user locale
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.continuous = false;
-
-    recognitionRef.current = recognition;
-
-    recognition.onstart = () => {
-      setState("listening");
-      setError(null);
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      setState("processing");
-      const transcript = Array.from(event.results as ArrayLike<SpeechRecognitionResult>)
-        .map((r) => (r as SpeechRecognitionResult)[0].transcript)
-        .join(" ");
-      onTranscript(transcript.trim());
-      setState("idle");
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      if (event.error === "not-allowed") {
-        setError("Microphone access denied. Please allow mic permission.");
-      } else if (event.error === "no-speech") {
-        setError("No speech detected. Try again.");
-      } else if (event.error === "network") {
-        setError("Network error. Check your connection.");
-      } else {
-        setError(`Speech error: ${event.error}`);
-      }
-      setState("idle");
-    };
-
-    recognition.onend = () => {
-      if (state === "listening") setState("idle");
-    };
-
-    recognition.start();
-  }
-
-  function stopListening() {
-    recognitionRef.current?.stop();
-    setState("idle");
-  }
-
-  function handleClick() {
-    if (state === "idle") startListening();
-    else if (state === "listening") stopListening();
-  }
-
-  if (state === "unsupported") {
-    return (
-      <button
-        type="button"
-        disabled
-        title="Speech-to-text is not supported in this browser"
-        className={cn(
-          "flex items-center justify-center rounded-lg p-1.5 text-muted-foreground/40 cursor-not-allowed",
-          className
-        )}
-      >
-        <MicOff className="h-4 w-4" />
-      </button>
-    );
-  }
+  const isListening = state === "listening";
+  const isProcessing = state === "processing";
+  const isDisabled = isProcessing;
 
   return (
-    <div className="relative inline-flex flex-col items-center gap-1">
-      <button
-        type="button"
-        onClick={handleClick}
-        title={state === "listening" ? "Stop recording" : label}
-        className={cn(
-          "flex items-center justify-center rounded-lg p-1.5 transition-all",
-          state === "listening"
-            ? "bg-red-500 text-white animate-pulse shadow-md shadow-red-300 dark:shadow-red-900"
-            : state === "processing"
-            ? "bg-muted text-muted-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted",
-          className
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      <div className="flex items-center gap-2">
+        {/* Language selector */}
+        {showLanguageSelector && !externalLang && (
+          <div className="relative flex items-center">
+            <select
+              value={internalLang}
+              onChange={(e) => setInternalLang(e.target.value as LanguageCode)}
+              disabled={isListening || isProcessing}
+              className={cn(
+                "appearance-none rounded-lg border border-border bg-background",
+                "pl-2.5 pr-6 py-1.5 text-xs text-foreground",
+                "focus:outline-none focus:ring-2 focus:ring-primary/30",
+                "disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              )}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted-foreground" />
+          </div>
         )}
-      >
-        {state === "processing" ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : state === "listening" ? (
-          <Mic className="h-4 w-4" />
-        ) : (
-          <Mic className="h-4 w-4" />
+
+        {/* Mic button */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={isListening ? stopRecording : startRecording}
+            disabled={isDisabled}
+            title={
+              isListening
+                ? "Stop recording"
+                : isProcessing
+                ? "Transcribing…"
+                : "Click to speak"
+            }
+            className={cn(
+              "relative flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
+              isListening
+                ? "bg-red-500 text-white shadow-md shadow-red-300/40 dark:shadow-red-900/40"
+                : isProcessing
+                ? "bg-muted text-muted-foreground cursor-not-allowed"
+                : "border border-border text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5"
+            )}
+          >
+            {/* Pulse rings while listening */}
+            {isListening && (
+              <>
+                <span className="absolute inset-0 rounded-lg animate-ping bg-red-400 opacity-30" />
+                <span className="absolute inset-0 rounded-lg animate-pulse bg-red-400 opacity-10" />
+              </>
+            )}
+
+            {isProcessing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : isListening ? (
+              <Square className="h-3.5 w-3.5 fill-current" />
+            ) : (
+              <Mic className="h-3.5 w-3.5" />
+            )}
+
+            <span>
+              {isProcessing
+                ? "Transcribing…"
+                : isListening
+                ? "Stop"
+                : "Speak"}
+            </span>
+          </button>
+        </div>
+
+        {/* Listening badge */}
+        {isListening && (
+          <span className="flex items-center gap-1 text-xs text-red-500 font-medium animate-pulse">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+            Listening…
+          </span>
         )}
-      </button>
+      </div>
 
-      {/* Listening indicator */}
-      {state === "listening" && (
-        <span className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white shadow">
-          Listening…
-        </span>
-      )}
-
-      {/* Error tooltip */}
-      {error && (
-        <span className="absolute top-8 left-1/2 -translate-x-1/2 z-10 w-48 rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-900/20 px-2 py-1.5 text-[10px] text-orange-700 dark:text-orange-300 shadow-md text-center">
+      {/* Error message */}
+      {state === "error" && error && (
+        <p className="flex items-center gap-1 text-xs text-orange-600 dark:text-orange-400">
+          <MicOff className="h-3 w-3 shrink-0" />
           {error}
-        </span>
+        </p>
       )}
     </div>
   );

@@ -12,7 +12,7 @@ const router = express.Router();
 router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
   try {
     const { userId: clerkUserId } = getAuth(req);
-    const { title, description, location, category, lat, lng } = req.body;
+    const { title, description, location, lat, lng } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ success: false, message: 'Title and description are required' });
@@ -38,7 +38,6 @@ router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
       title,
       description,
       location: location || null,
-      category: category || null,
       imageUrl,
       coordinates,
       reportedBy: clerkUserId,
@@ -247,7 +246,7 @@ router.patch('/:id', requireAuth(), async (req, res) => {
     const issueId = new ObjectId(req.params.id);
     const allowedFields = [
       'status', 'severityScore', 'suggestedDepartment',
-      'title', 'description', 'location', 'category', 'predictedIssueType',
+      'title', 'description', 'location', 'predictedIssueType',
     ];
 
     const updates = {};

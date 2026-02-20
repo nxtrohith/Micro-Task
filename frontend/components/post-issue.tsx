@@ -10,20 +10,9 @@ import { SpeechToTextButton } from "@/components/speech-to-text-button";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
-const CATEGORIES = [
-  "Infrastructure",
-  "Safety",
-  "Sanitation",
-  "Utilities",
-  "Electrical",
-  "Plumbing",
-  "Other",
-];
-
 interface FormState {
   title: string;
   description: string;
-  category: string;
   location: string;
 }
 
@@ -44,7 +33,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
-    category: "",
     location: "",
   });
   const [errors, setErrors] = useState<FormErrors>({});
@@ -117,7 +105,6 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       const body = new FormData();
       body.append("title", form.title.trim());
       body.append("description", form.description.trim());
-      if (form.category) body.append("category", form.category);
       if (form.location) body.append("location", form.location.trim());
       if (image) body.append("image", image);
 
@@ -143,7 +130,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       }
 
       // Reset
-      setForm({ title: "", description: "", category: "", location: "" });
+      setForm({ title: "", description: "", location: "" });
       removeImage();
       setPickedLocation(null);
       setExpanded(false);
@@ -160,7 +147,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   }
 
   function handleCancel() {
-    setForm({ title: "", description: "", category: "", location: "" });
+    setForm({ title: "", description: "", location: "" });
     removeImage();
     setPickedLocation(null);
     setErrors({});
@@ -253,28 +240,8 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
             )}
           </div>
 
-          {/* Category + Location text */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label htmlFor="category" className="text-sm font-medium">
-                Category
-              </label>
-              <select
-                id="category"
-                name="category"
-                value={form.category}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">Select category…</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-
+          {/* Location text */}
+          <div className="grid grid-cols-1 gap-4">
             <div className="space-y-1">
               <label htmlFor="location" className="text-sm font-medium">
                 Location (text)

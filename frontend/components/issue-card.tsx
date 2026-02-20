@@ -15,7 +15,6 @@ export interface Issue {
   description: string;
   location?: string;
   imageUrl?: string;
-  category?: string;
   status: "reported" | "approved" | "in_progress" | "resolved";
   upvotes: string[];
   reportedBy?: string;
@@ -131,12 +130,6 @@ export function IssueCard({ issue }: { issue: Issue }) {
 
         {/* Meta row */}
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-          {issue.category && (
-            <span className="flex items-center gap-1">
-              <Tag className="h-3 w-3" />
-              {issue.category}
-            </span>
-          )}
           {issue.location && (
             <span className="flex items-center gap-1">
               <MapPin className="h-3 w-3" />
@@ -200,7 +193,6 @@ export interface Issue {
   description: string;
   location?: string;
   imageUrl?: string;
-  category?: string;
   status: "reported" | "approved" | "in_progress" | "resolved";
   upvotes: string[];
   reportedBy?: string;

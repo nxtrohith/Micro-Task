@@ -97,7 +97,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
-  const { status: geoStatus, coords, requestLocation, reset: resetGeo } = useGeolocation();
+  const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
   // Store GPS coords captured during analyze step
   const gpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   // AbortController for the in-flight /preview fetch

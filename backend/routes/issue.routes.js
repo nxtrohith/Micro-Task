@@ -162,7 +162,88 @@ router.post('/', requireAuth(), async (req, res) => {
   }
 });
 
-// ---------- GET /api/issues  ----------
+// ---------- POST /api/issues/check-duplicate  ----------
+// Returns nearby issues with similar descriptions (potential duplicates).
+// Uses Haversine distance + Jaccard text similarity — no external dependencies.
+router.post('/check-duplicate', async (req, res) => {
+  try {
+    const { description, lat, lng } = req.body;
+
+    if (!description || lat == null || lng == null) {
+      return res.json({ success: true, duplicates: [] });
+    }
+
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const db = getDB();
+
+    // Fetch issues that have coordinates (only non-resolved/nearby candidates)
+    const candidates = await db
+      .collection('issues')
+      .find(
+        { coordinates: { $ne: null }, status: { $ne: 'resolved' } },
+        { projection: { _id: 1, title: 1, description: 1, location: 1, imageUrl: 1, status: 1, category: 1, suggestedDepartment: 1, coordinates: 1, createdAt: 1, upvotes: 1 } }
+      )
+      .toArray();
+
+    // ── Haversine distance in metres ──────────────────────────────────────
+    function haversine(lat1, lng1, lat2, lng2) {
+      const R = 6371000;
+      const toRad = (d) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // ── Jaccard similarity on normalized word tokens ──────────────────────
+    function normalize(text) {
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length > 2); // drop very short words
+    }
+
+    function jaccard(a, b) {
+      const setA = new Set(normalize(a));
+      const setB = new Set(normalize(b));
+      if (setA.size === 0 && setB.size === 0) return 0;
+      const intersection = [...setA].filter((w) => setB.has(w)).length;
+      const union = new Set([...setA, ...setB]).size;
+      return union === 0 ? 0 : intersection / union;
+    }
+
+    const DISTANCE_THRESHOLD_M = 200; // 200 m radius
+    const SIMILARITY_THRESHOLD = 0.25; // Jaccard ≥ 0.25
+
+    const matches = [];
+    for (const issue of candidates) {
+      const { lat: iLat, lng: iLng } = issue.coordinates || {};
+      if (iLat == null || iLng == null) continue;
+
+      const distanceMeters = haversine(userLat, userLng, iLat, iLng);
+      if (distanceMeters > DISTANCE_THRESHOLD_M) continue;
+
+      const sim = jaccard(description, issue.description || '');
+      if (sim < SIMILARITY_THRESHOLD) continue;
+
+      matches.push({ ...issue, similarityScore: Math.round(sim * 100), distanceMeters: Math.round(distanceMeters) });
+    }
+
+    // Sort by similarity descending, return top 3
+    matches.sort((a, b) => b.similarityScore - a.similarityScore);
+
+    res.json({ success: true, duplicates: matches.slice(0, 3) });
+  } catch (err) {
+    console.error('[CHECK-DUPLICATE] ❌', err.message);
+    res.json({ success: true, duplicates: [] }); // fail open — never block submission
+  }
+});
+
+
 // Fetch all issues (newest first) with reporter name joined from users
 router.get('/', async (req, res) => {
   try {

@@ -7,7 +7,6 @@ const issueRoutes = require('./routes/issue.routes');
 const userRoutes = require('./routes/user.routes');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({
@@ -23,6 +22,24 @@ app.use(express.urlencoded({ extended: true }));
 // Clerk middleware — makes req.auth available on every request
 // (does NOT enforce auth — individual routes use requireAuth())
 app.use(clerkMiddleware());
+
+// Lazy, cached DB connection — safe for serverless cold starts
+let dbConnectionPromise = null;
+app.use(async (req, res, next) => {
+  if (!dbConnectionPromise) {
+    dbConnectionPromise = connectDB().catch((err) => {
+      dbConnectionPromise = null; // allow retry on next request
+      throw err;
+    });
+  }
+  try {
+    await dbConnectionPromise;
+    next();
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
 
 // Routes
 app.get('/', (req, res) => {
@@ -42,20 +59,23 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// Connect to DB then start server
-connectDB()
-  .then(() => {
-    const server = app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+// Local development: start a real HTTP server
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  connectDB()
+    .then(() => {
+      const server = app.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+      // Extend timeouts so long-running webhook calls don't get dropped
+      server.keepAliveTimeout = 120_000;
+      server.headersTimeout  = 125_000;
+    })
+    .catch((err) => {
+      console.error('Failed to connect to MongoDB:', err);
+      process.exit(1);
     });
+}
 
-    // Extend timeouts so long-running n8n webhook calls (up to 90 s)
-    // don't get dropped by Node's default 5-second keep-alive timeout,
-    // which would cause the browser to receive a 502 Bad Gateway.
-    server.keepAliveTimeout = 120_000;  // 120 s
-    server.headersTimeout = 125_000;  // must be > keepAliveTimeout
-  })
-  .catch((err) => {
-    console.error('Failed to connect to MongoDB:', err);
-    process.exit(1);
-  });
+// Vercel serverless export
+module.exports = app;

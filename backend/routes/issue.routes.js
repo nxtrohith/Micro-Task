@@ -12,7 +12,7 @@ const router = express.Router();
 router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
   try {
     const { userId: clerkUserId } = getAuth(req);
-    const { title, description, location, category } = req.body;
+    const { title, description, location, category, lat, lng } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ success: false, message: 'Title and description are required' });
@@ -27,12 +27,20 @@ router.post('/', requireAuth(), upload.single('image'), async (req, res) => {
     }
 
     const db = getDB();
+
+    // Parse GPS coordinates if provided
+    const coordinates =
+      lat && lng
+        ? { lat: parseFloat(lat), lng: parseFloat(lng) }
+        : null;
+
     const issue = {
       title,
       description,
       location: location || null,
       category: category || null,
       imageUrl,
+      coordinates,
       reportedBy: clerkUserId,
       status: 'reported',
       upvotes: [],

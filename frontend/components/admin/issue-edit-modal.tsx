@@ -23,6 +23,7 @@ export interface AdminIssue {
   reportedBy?: string;
   createdAt: string;
   updatedAt?: string;
+  coordinates?: { lat: number; lng: number };
 }
 
 const DEPARTMENTS = [

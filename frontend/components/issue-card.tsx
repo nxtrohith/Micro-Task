@@ -52,6 +52,7 @@ export function IssueCard({ issue }: { issue: Issue }) {
   const [pending, setPending] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
 
   const [verificationUpvoteCount, setVerificationUpvoteCount] = useState(
     issue.verificationUpvotes?.length ?? 0
@@ -161,10 +162,28 @@ export function IssueCard({ issue }: { issue: Issue }) {
           </div>
         </div>
 
-        {/* Description */}
-        <p className="mt-2 text-sm text-muted-foreground line-clamp-3">
-          {issue.description}
-        </p>
+        {/* Description with Read More / Read Less */}
+        <div className="mt-2">
+          <div
+            style={{
+              maxHeight: descExpanded ? "600px" : "4.5rem",
+              overflow: "hidden",
+              transition: "max-height 0.3s ease",
+            }}
+          >
+            <p className="text-sm text-muted-foreground leading-6">
+              {issue.description}
+            </p>
+          </div>
+          {issue.description.length > 150 && (
+            <button
+              onClick={() => setDescExpanded((v) => !v)}
+              className="mt-1 text-xs font-medium text-primary hover:underline focus:outline-none"
+            >
+              {descExpanded ? "Read less" : "Read more"}
+            </button>
+          )}
+        </div>
 
         {/* Optional image — click to open lightbox */}
         {issue.imageUrl && (

@@ -174,6 +174,8 @@ export function AdminIssueMap({
   const onStatusChangeRef = useRef(onStatusChange);
   const issuesRef = useRef(issues);
   const updatingIdsRef = useRef<Set<string>>(new Set());
+  // Track whether we've already auto-zoomed to the user's location
+  const hasAutoZoomedRef = useRef(false);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
@@ -326,7 +328,7 @@ export function AdminIssueMap({
     })();
   }, [issues, userLocation]);
 
-  // ── User location marker ──
+  // ── User location marker and auto-zoom on first fix ──
   useEffect(() => {
     if (!mapRef.current || !userLocation) return;
     (async () => {
@@ -340,6 +342,16 @@ export function AdminIssueMap({
         .bindPopup(
           '<div style="font-size:12px;font-weight:600;">📍 Your Location</div>'
         );
+
+      // Smoothly fly to user position at street-level zoom on first detection
+      if (!hasAutoZoomedRef.current) {
+        hasAutoZoomedRef.current = true;
+        mapRef.current!.flyTo(
+          [userLocation.lat, userLocation.lng],
+          15,
+          { animate: true, duration: 1.2 }
+        );
+      }
     })();
   }, [userLocation]);
 

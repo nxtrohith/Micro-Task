@@ -115,6 +115,8 @@ export function IssueMap({
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const markersRef = useRef<import("leaflet").Marker[]>([]);
   const userMarkerRef = useRef<import("leaflet").Marker | null>(null);
+  // Track whether we've already auto-zoomed to the user's location
+  const hasAutoZoomedRef = useRef(false);
 
   const destroyMap = useCallback(() => {
     markersRef.current.forEach((m) => m.remove());
@@ -220,7 +222,7 @@ export function IssueMap({
     })();
   }, [issues]);
 
-  // Update user location marker
+  // Update user location marker and auto-zoom on first location detection
   useEffect(() => {
     if (!mapRef.current || !userLocation) return;
 
@@ -233,7 +235,16 @@ export function IssueMap({
       })
         .addTo(mapRef.current!)
         .bindPopup('<div style="font-size:12px;font-weight:600;">📍 Your Location</div>');
-      mapRef.current!.setView([userLocation.lat, userLocation.lng], mapRef.current!.getZoom());
+
+      // On first location fix: smoothly fly to user position at a comfortable zoom level
+      if (!hasAutoZoomedRef.current) {
+        hasAutoZoomedRef.current = true;
+        mapRef.current!.flyTo(
+          [userLocation.lat, userLocation.lng],
+          15, // street-level zoom showing surroundings
+          { animate: true, duration: 1.2 }
+        );
+      }
     })();
   }, [userLocation]);
 

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const { clerkMiddleware } = require('@clerk/express');
 const { connectDB, getDB } = require('./config/db');
 const issueRoutes = require('./routes/issue.routes');
@@ -19,6 +20,24 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Rate Limiting - General API protection
+// ──────────────────────────────────────────────────────────────────────────────
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV === 'development' && req.ip === '::1',
+});
+
+// Apply general rate limiter to all API routes
+app.use('/api/', generalLimiter);
 
 // Clerk middleware — makes req.auth available on every request
 // (does NOT enforce auth — individual routes use requireAuth())

@@ -5,6 +5,7 @@ const upload = require('../middleware/upload');
 const { requireAuth, getAuth } = require('../middleware/auth');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 const { getDB } = require('../config/db');
+const { aiPreviewLimiter, createIssueLimiter, interactionLimiter } = require('../middleware/rateLimiter');
 const { awardPoints, resolutionPoints } = require('../utils/points');
 
 const router = express.Router();
@@ -14,8 +15,9 @@ const WEBHOOK_TIMEOUT_MS = 90000; // 90 s — production n8n workflows can take 
 
 // ---------- POST /api/issues/preview  ----------
 // Step 1: Upload image to Cloudinary, call n8n webhook, return AI-enriched fields.
-// The issue is NOT saved to the DB here. 
-router.post('/preview', requireAuth(), upload.single('image'), async (req, res) => {
+// The issue is NOT saved to the DB here.
+// RATE LIMITED: 10 requests per 15 minutes (expensive AI operation)
+router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'), async (req, res) => {
   try {
     const { title, description } = req.body;
     console.log('\n[PREVIEW] ── New preview request received ──');
@@ -96,7 +98,8 @@ router.post('/preview', requireAuth(), upload.single('image'), async (req, res) 
 // ---------- POST /api/issues  ----------
 // Step 2: Save the confirmed (and optionally user-edited) issue to the DB.
 // Accepts imageUrl as a plain string (already uploaded in /preview).
-router.post('/', requireAuth(), async (req, res) => {
+// RATE LIMITED: 20 requests per 15 minutes
+router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
   try {
     const { userId: clerkUserId } = getAuth(req);
     const {
@@ -354,7 +357,8 @@ router.get('/:id/comments', async (req, res) => {
 });
 
 // ---------- POST /api/issues/:id/comments  ----------
-router.post('/:id/comments', requireAuth(), async (req, res) => {
+// RATE LIMITED: 50 interactions per 15 minutes
+router.post('/:id/comments', interactionLimiter, requireAuth(), async (req, res) => {
   try {
     const { userId: clerkUserId } = getAuth(req);
     const { text } = req.body;
@@ -400,7 +404,8 @@ router.post('/:id/comments', requireAuth(), async (req, res) => {
 
 // ---------- PATCH /api/issues/:id/upvote  ----------
 // Toggle upvote for the authenticated user
-router.patch('/:id/upvote', requireAuth(), async (req, res) => {
+// RATE LIMITED: 50 interactions per 15 minutes
+router.patch('/:id/upvote', interactionLimiter, requireAuth(), async (req, res) => {
   try {
     const { userId: clerkUserId } = getAuth(req);
     const db = getDB();

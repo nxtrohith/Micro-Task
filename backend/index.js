@@ -6,6 +6,7 @@ const { clerkMiddleware } = require('@clerk/express');
 const { connectDB, getDB } = require('./config/db');
 const issueRoutes = require('./routes/issue.routes');
 const userRoutes = require('./routes/user.routes');
+const eventRoutes = require('./routes/event.routes');
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/issues', issueRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/events', eventRoutes);
 
 app.get('/api/test-db', async (req, res) => {
   try {

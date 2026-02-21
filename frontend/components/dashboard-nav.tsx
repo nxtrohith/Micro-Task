@@ -7,6 +7,8 @@ import { Rss, Map, CalendarDays, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
+import { ProfileBadge } from "@/components/profile-badge";
+
 const NAV_LINKS = [
   { href: "/feed", label: "Feed", icon: Rss },
   { href: "/map", label: "Map", icon: Map },
@@ -44,8 +46,9 @@ export function DashboardNav() {
           ))}
         </nav>
 
-        {/* Right: UserButton + mobile toggle */}
-        <div className="flex items-center gap-3">
+        {/* Right: ProfileBadge + UserButton + mobile toggle */}
+        <div className="flex items-center gap-2">
+          <ProfileBadge variant="compact" className="hidden sm:inline-flex" />
           <UserButton
             afterSignOutUrl="/"
             appearance={{ elements: { avatarBox: "h-8 w-8" } }}

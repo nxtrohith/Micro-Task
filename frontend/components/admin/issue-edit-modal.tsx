@@ -24,6 +24,9 @@ export interface AdminIssue {
   createdAt: string;
   updatedAt?: string;
   coordinates?: { lat: number; lng: number };
+  verificationImageUrl?: string;
+  verificationStatus?: "pending_verification" | "verified";
+  verificationUpvotes?: string[];
 }
 
 const DEPARTMENTS = [

@@ -184,50 +184,50 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       : (mlSeverityAccepted ? 'n8n_with_ml_severity_override' : 'n8n');
 
     const responseData = {
-  imageUrl,
+      imageUrl,
 
-  // Description priority: AI → ML → original
-  description: aiFields.description || mlResult?.description || description,
+      // Description priority: n8n/AI -> ML caption -> original
+      description: finalAnalysis?.description || mlResult?.description || description,
 
-  // Issue classification
-  issueType: finalAnalysis?.issue || null,
-  category: aiFields.category || finalAnalysis?.issue || null,
-  predictedIssueType: finalAnalysis?.issue || aiFields.predictedIssueType || null,
+      // Issue classification
+      issueType: finalAnalysis?.issue || null,
+      category: finalAnalysis?.issue || null,
+      predictedIssueType: finalAnalysis?.issue || null,
 
-  // Severity
-  severity: finalAnalysis?.severity || 'None',
-  severityScore: finalAnalysis?.severityScore ?? parseIntegerOrNull(aiFields.severityScore),
+      // Severity
+      severity: finalAnalysis?.severity || 'None',
+      severityScore: finalAnalysis?.severityScore ?? null,
 
-  // Impact metrics
-  impactScope: aiFields.impactScope || null,
-  urgency: aiFields.urgency || null,
-  priorityScore: parseIntegerOrNull(aiFields.priorityScore),
+      // Impact metrics (not currently produced by normalization)
+      impactScope: null,
+      urgency: null,
+      priorityScore: null,
 
-  // Department routing
-  department: finalAnalysis?.department || null,
-  suggestedDepartment: finalAnalysis?.department || aiFields.suggestedDepartment || null,
+      // Department routing
+      department: finalAnalysis?.department || null,
+      suggestedDepartment: finalAnalysis?.department || null,
 
-  // ML outputs
-  mlOk,
-  mlError,
-  mlSeverityAccepted: Boolean(mlSeverityAccepted),
-  mlSeverity: mlResult?.severity || null,
-  mlConfidence: mlResult?.confidence ?? null,
-  mlDescription: mlResult?.description || null,
+      // ML outputs
+      mlOk,
+      mlError,
+      mlSeverityAccepted: Boolean(mlSeverityAccepted),
+      mlSeverity: mlResult?.severity || null,
+      mlConfidence: mlResult?.confidence ?? null,
+      mlDescription: mlResult?.description || null,
 
-  // AI metadata
-  confidence: finalAnalysis?.confidence,
+      // AI metadata
+      confidence: finalAnalysis?.confidence,
 
-  // Resolution estimate
-  estimatedResolution: aiFields.estimatedResolution || null,
+      // Resolution estimate (not currently produced by normalization)
+      estimatedResolution: null,
 
-  // Source tracking
-  source,
+      // Source tracking
+      source,
 
-  // Webhook status
-  webhookOk,
-  webhookError
-};
+      // Webhook status
+      webhookOk,
+      webhookError,
+    };
     console.log('[PREVIEW] Sending enriched fields to client:', JSON.stringify(responseData));
     console.log('[PREVIEW] ── Done. Awaiting user confirmation. ──\n');
 

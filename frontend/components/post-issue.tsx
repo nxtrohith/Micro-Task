@@ -257,6 +257,30 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       previewAbortRef.current = null;
 
       const data = await res.json().catch(() => ({}));
+      /* --------------------------------
+        IMAGE DUPLICATE DETECTION
+      -------------------------------- */
+
+      if (data?.duplicate && data?.originalIssue) {
+
+        console.log("Duplicate issue detected:", data.originalIssue);
+
+        // exit analyzing state
+        setStage("form");
+
+        // show duplicate modal
+        setDuplicateMatches([data.originalIssue]);
+
+        return;
+      }
+
+      /* --------------------------------
+        NORMAL PREVIEW FLOW
+      -------------------------------- */
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || "Preview failed");
+      }
 
       // Even if the call failed, fall back gracefully to review with original fields
       const responseData = res.ok ? data.data : null;
@@ -272,6 +296,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           responseData.description
         )
       );
+      
 
       if (!res.ok || !aiDataPresent) {
         setWebhookFailed(true);

@@ -21,6 +21,8 @@ import { useGeolocation } from "@/lib/hooks/use-geolocation";
 import { DuplicateWarningModal, type DuplicateMatch } from "@/components/duplicate-warning-modal";
 import { ProcessingStatusIndicator } from "@/components/processing-status-indicator";
 
+
+
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
 const suggestedDepartments = [
@@ -257,6 +259,35 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       previewAbortRef.current = null;
 
       const data = await res.json().catch(() => ({}));
+      
+/* --------------------------------
+   IMAGE DUPLICATE DETECTION
+-------------------------------- */
+
+if (data?.duplicate && data?.originalIssue) {
+
+  console.log("Duplicate issue detected:", data.originalIssue);
+
+  setStage("form"); // exit analyzing state
+  setDuplicateMatches([data.originalIssue]);
+
+  return;
+}
+
+/* --------------------------------
+   NORMAL PREVIEW FLOW
+-------------------------------- */
+
+if (!res.ok || !data?.success) {
+  throw new Error(data?.message || "Preview failed");
+}
+
+
+
+
+
+const preview = data.data;
+
 
       // Even if the call failed, fall back gracefully to review with original fields
       const responseData = res.ok ? data.data : null;

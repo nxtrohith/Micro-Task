@@ -1,3 +1,4 @@
+const { isDuplicate } = require('../utils/duplicateDetector');
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const axios = require('axios');
@@ -118,16 +119,74 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       return res.status(400).json({ success: false, message: 'Title and description are required' });
     }
 
-    // Upload image to Cloudinary if provided
-    let imageUrl = null;
-    if (req.file) {
-      console.log('[PREVIEW] Uploading image to Cloudinary…');
-      const result = await uploadToCloudinary(req.file.buffer);
-      imageUrl = result.secure_url;
-      console.log('[PREVIEW] ✅ Cloudinary upload successful:', imageUrl);
-    } else {
-      console.log('[PREVIEW] No image — skipping Cloudinary upload.');
+// Upload image to Cloudinary if provided
+let imageUrl = null;
+
+if (req.file) {
+
+  console.log('[PREVIEW] Uploading image to Cloudinary…');
+
+  const result = await uploadToCloudinary(req.file.buffer);
+  imageUrl = result.secure_url;
+
+  console.log('[PREVIEW] ✅ Cloudinary upload successful:', imageUrl);
+
+  // -------------------------------------------------
+  // IMAGE DUPLICATE DETECTION
+  // -------------------------------------------------
+
+  const db = getDB();
+
+  const existingIssues = await db
+    .collection('issues')
+    .find({ imageUrl: { $ne: null } })
+    .project({
+      title: 1,
+      description: 1,
+      imageUrl: 1,
+      location: 1,
+      severity: 1,
+      createdAt: 1
+    })
+    .toArray();
+
+  let duplicateIssue = null;
+
+  if (existingIssues.length > 0) {
+
+    const existingImages = existingIssues
+      .map(issue => issue.imageUrl)
+      .filter(Boolean);
+
+    const duplicateIndex = await isDuplicate(
+      req.file.buffer,
+      existingImages
+    );
+
+    if (duplicateIndex !== false) {
+
+      duplicateIssue = existingIssues[duplicateIndex];
+
+      console.log('[PREVIEW] ⚠ Duplicate image detected');
+
+      return res.status(200).json({
+        success: true,
+        duplicate: true,
+        originalIssue: duplicateIssue,
+        message: "A similar issue image already exists"
+      });
+
     }
+
+  }
+
+  console.log('[PREVIEW] ✅ Image passed duplicate detection');
+
+} else {
+
+  console.log('[PREVIEW] No image — skipping Cloudinary upload.');
+
+}
 
     let mlOk = !req.file;
     let mlError = null;

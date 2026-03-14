@@ -265,11 +265,21 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
         console.log("Duplicate issue detected:", data.originalIssue);
 
-        // exit analyzing state
         setStage("form");
 
-        // show duplicate modal
-        setDuplicateMatches([data.originalIssue]);
+        const issue = data.originalIssue;
+
+        const formattedMatch = {
+          _id: issue._id || Math.random().toString(),
+          title: issue.title || "Existing Issue",
+          description: issue.description || "",
+          imageUrl: issue.imageUrl || "",
+          location: issue.location || "",
+          similarityScore: 100,
+          distanceMeters: 0
+        };
+
+        setDuplicateMatches([formattedMatch]);
 
         return;
       }

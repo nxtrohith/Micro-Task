@@ -1,6 +1,7 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const axios = require('axios');
+const { isDuplicate } = require('../utils/duplicateDetector');
 const FormData = require('form-data');
 const upload = require('../middleware/upload');
 const { requireAuth, getAuth } = require('../middleware/auth');

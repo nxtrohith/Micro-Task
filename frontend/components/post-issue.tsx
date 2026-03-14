@@ -19,6 +19,7 @@ import { LocationPicker, type PickedLocation } from "@/components/location-picke
 import { SpeechToTextButton } from "@/components/speech-to-text-button";
 import { useGeolocation } from "@/lib/hooks/use-geolocation";
 import { DuplicateWarningModal, type DuplicateMatch } from "@/components/duplicate-warning-modal";
+import { ProcessingStatusIndicator } from "@/components/processing-status-indicator";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5500").replace(/\/$/, "");
 
@@ -31,6 +32,26 @@ const suggestedDepartments = [
   "Security",
   "Other",
 ];
+
+const severityOptions = ["Low", "Medium", "High", "Critical"] as const;
+
+function severityFromScore(score: unknown): string {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) return "";
+  if (numeric >= 8) return "Critical";
+  if (numeric >= 5) return "High";
+  if (numeric >= 3) return "Medium";
+  if (numeric >= 1) return "Low";
+  return "Low";
+}
+
+function severityToScore(severity: string): number | null {
+  if (severity === "Critical") return 9;
+  if (severity === "High") return 7;
+  if (severity === "Medium") return 4;
+  if (severity === "Low") return 2;
+  return null;
+}
 
 interface FormState {
   title: string;
@@ -47,7 +68,8 @@ interface FormErrors {
 interface AIFields {
   imageUrl: string | null;
   predictedIssueType: string;
-  severityScore: number | string;
+  severity: string;
+  confidence: number | string;
   suggestedDepartment: string;
   description: string;
 }
@@ -62,6 +84,11 @@ type Stage = "form" | "analyzing" | "review";
 // Must be slightly longer than the backend axios timeout (90 s) so the backend
 // error is surfaced rather than a raw network abort.
 const PREVIEW_FETCH_TIMEOUT_MS = 100_000; // 100 s
+const AI_RUNNING_MESSAGE = "Running AI analysis to classify the issue...";
+const ML_HIGH_MESSAGE = "High confidence detected — using ML model to estimate severity...";
+const ML_LOW_MESSAGE = "Low confidence detected — delegating analysis to AI agent...";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function PostIssue({ onSuccess }: PostIssueProps) {
   const { getToken } = useAuth();
@@ -83,6 +110,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [webhookFailed, setWebhookFailed] = useState(false);
   const [webhookErrorCode, setWebhookErrorCode] = useState<string | null>(null);
   const [analysisTimedOut, setAnalysisTimedOut] = useState(false);
+  const [processingStatusMessage, setProcessingStatusMessage] = useState(AI_RUNNING_MESSAGE);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
@@ -179,6 +207,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     setWebhookFailed(false);
     setWebhookErrorCode(null);
     setAnalysisTimedOut(false);
+    setProcessingStatusMessage(AI_RUNNING_MESSAGE);
 
     // Set up an AbortController so we never hang forever
     const controller = new AbortController();
@@ -226,11 +255,20 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         setWebhookErrorCode(responseData?.webhookError ?? null);
       }
 
+      const mlConfidence = Number(responseData?.mlConfidence ?? responseData?.confidence);
+      if (Number.isFinite(mlConfidence)) {
+        setProcessingStatusMessage(
+          mlConfidence >= 0.8 ? ML_HIGH_MESSAGE : ML_LOW_MESSAGE
+        );
+        await sleep(900);
+      }
+
       setAiFields({
         imageUrl: responseData?.imageUrl ?? null,
-        predictedIssueType: responseData?.predictedIssueType ?? "",
-        severityScore: responseData?.severityScore ?? "",
-        suggestedDepartment: responseData?.suggestedDepartment ?? "",
+        predictedIssueType: responseData?.issueType ?? responseData?.predictedIssueType ?? "",
+        severity: responseData?.severity ?? severityFromScore(responseData?.severityScore),
+        confidence: responseData?.confidence ?? "",
+        suggestedDepartment: responseData?.department ?? responseData?.suggestedDepartment ?? "",
         description: responseData?.description ?? form.description.trim(),
       });
       setStage("review");
@@ -242,10 +280,12 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       // Network-level failure or timeout — still go to review with original fields
       setWebhookFailed(true);
       setWebhookErrorCode(isAbort ? "TIMEOUT" : "NETWORK_ERROR");
+      setProcessingStatusMessage(AI_RUNNING_MESSAGE);
       setAiFields({
         imageUrl: null,
         predictedIssueType: "",
-        severityScore: "",
+        severity: "",
+        confidence: "",
         suggestedDepartment: "",
         description: form.description.trim(),
       });
@@ -304,7 +344,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         location: form.location.trim() || null,
         imageUrl: aiFields.imageUrl,
         predictedIssueType: aiFields.predictedIssueType || null,
-        severityScore: aiFields.severityScore !== "" ? aiFields.severityScore : null,
+        severity: aiFields.severity || null,
+        confidence: aiFields.confidence !== "" ? Number(aiFields.confidence) : null,
+        severityScore: severityToScore(aiFields.severity),
         suggestedDepartment: aiFields.suggestedDepartment || null,
         lat: gps?.lat ?? null,
         lng: gps?.lng ?? null,
@@ -356,6 +398,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     setWebhookFailed(false);
     setWebhookErrorCode(null);
     setAnalysisTimedOut(false);
+    setProcessingStatusMessage(AI_RUNNING_MESSAGE);
     gpsCoordsRef.current = null;
   }
 
@@ -390,6 +433,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
                 ? "The AI is taking longer than expected. Hang tight or cancel and retry."
                 : "Our AI is classifying and enhancing your report. This may take up to 90 seconds."}
             </p>
+            <ProcessingStatusIndicator message={processingStatusMessage} />
             {elapsedSeconds > 0 && (
               <p className="text-xs tabular-nums text-muted-foreground/70">
                 {elapsedSeconds}s elapsed
@@ -471,20 +515,27 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           {/* Severity + Department */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <label htmlFor="ai-severityScore" className="text-sm font-medium flex items-center gap-1.5">
-                Severity Score <span className="text-muted-foreground font-normal">(1–10)</span>
-                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI</span>
+              <label htmlFor="ai-severity" className="text-sm font-medium flex items-center gap-1.5">
+                Severity
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">AI / ML</span>
               </label>
-              <input
-                id="ai-severityScore"
-                name="severityScore"
-                type="number"
-                min={1}
-                max={10}
-                value={aiFields.severityScore}
+              <select
+                id="ai-severity"
+                name="severity"
+                value={aiFields.severity}
                 onChange={handleAiFieldChange}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/30"
-              />
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">Select severity…</option>
+                {severityOptions.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                Confidence: {aiFields.confidence !== "" ? Number(aiFields.confidence).toFixed(2) : "N/A"}
+              </p>
             </div>
 
             <div className="space-y-1">

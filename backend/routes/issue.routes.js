@@ -1,17 +1,97 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const axios = require('axios');
+const FormData = require('form-data');
 const upload = require('../middleware/upload');
 const { requireAuth, getAuth } = require('../middleware/auth');
 const { uploadToCloudinary } = require('../utils/cloudinaryUpload');
 const { getDB } = require('../config/db');
 const { aiPreviewLimiter, createIssueLimiter, interactionLimiter } = require('../middleware/rateLimiter');
 const { awardPoints, resolutionPoints } = require('../utils/points');
+const {
+  normalizeSeverity,
+  severityFromScore,
+  scoreFromSeverity,
+  sortIssuesBySeverity,
+} = require('../utils/severityRanking');
 
 const router = express.Router();
 
-const WEBHOOK_URL = 'https://n8n1.rohithn8n.me/webhook/cad109f9-1c30-404a-be6b-6a6aa8c90b64';
+const WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n1.rohithn8n.me/webhook/cad109f9-1c30-404a-be6b-6a6aa8c90b64';
 const WEBHOOK_TIMEOUT_MS = 90000; // 90 s — production n8n workflows can take longer than 60 s
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000/analyze-severity';
+const ML_CONFIDENCE_THRESHOLD = Number(process.env.ML_CONFIDENCE_THRESHOLD || 0.8);
+
+function parseConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric < 0 || numeric > 1) return null;
+  return numeric;
+}
+
+function normalizeLocation(lat, lng) {
+  const parsedLat = Number.parseFloat(lat);
+  const parsedLng = Number.parseFloat(lng);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
+  return { lat: parsedLat, lng: parsedLng };
+}
+
+function normalizeN8nAnalysis(payload, fallbackDescription) {
+  const issue =
+    payload?.issue ||
+    payload?.issueType ||
+    payload?.category ||
+    payload?.predictedIssueType ||
+    null;
+  const severity = normalizeSeverity(payload?.severity || severityFromScore(payload?.severityScore));
+  const confidence = parseConfidence(payload?.confidence) ?? parseConfidence(payload?.confidenceScore);
+  const department = payload?.department || payload?.suggestedDepartment || null;
+  const description = payload?.description || fallbackDescription;
+  const severityScoreFromPayload = Number(payload?.severityScore);
+  return {
+    description,
+    issue,
+    severity,
+    confidence,
+    department,
+    severityScore: Number.isFinite(severityScoreFromPayload) ? severityScoreFromPayload : scoreFromSeverity(severity),
+  };
+}
+
+function normalizeMlSeverity(payload) {
+  const severity = normalizeSeverity(payload?.severity);
+  return {
+    description: payload?.description || null,
+    severity,
+    confidence: parseConfidence(payload?.confidence),
+    severityScore: scoreFromSeverity(severity),
+  };
+}
+
+async function callMlSeverityService(file) {
+  const form = new FormData();
+  form.append('image', file.buffer, {
+    filename: file.originalname || 'issue-image.jpg',
+    contentType: file.mimetype || 'image/jpeg',
+  });
+
+  const mlResponse = await axios.post(ML_SERVICE_URL, form, {
+    headers: form.getHeaders(),
+    timeout: 25000,
+  });
+  return normalizeMlSeverity(mlResponse.data);
+}
+
+async function callN8nWebhook(title, description, imageUrl) {
+  const webhookRes = await axios.post(
+    WEBHOOK_URL,
+    { title, description, image_url: imageUrl },
+    { headers: { 'Content-Type': 'application/json' }, timeout: WEBHOOK_TIMEOUT_MS }
+  );
+  const raw = webhookRes.data;
+  const parsed = Array.isArray(raw) ? (raw[0] || {}) : (raw && typeof raw === 'object' ? raw : {});
+  return normalizeN8nAnalysis(parsed, description);
+}
 
 // ---------- POST /api/issues/preview  ----------
 // Step 1: Upload image to Cloudinary, call n8n webhook, return AI-enriched fields.
@@ -40,49 +120,80 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       console.log('[PREVIEW] No image — skipping Cloudinary upload.');
     }
 
-    // Call n8n webhook synchronously and await AI-enriched fields
-    let aiFields = {};
-    let webhookOk = true;
-    let webhookError = null; // 'TIMEOUT' | 'HTTP_ERROR' | 'NETWORK_ERROR' | 'EMPTY_RESPONSE' | null
-    try {
-      console.log('[PREVIEW] Calling n8n webhook…');
-      console.log('[PREVIEW] Payload:', JSON.stringify({ title, description, image_url: imageUrl }));
-      const webhookRes = await axios.post(
-        WEBHOOK_URL,
-        { title, description, image_url: imageUrl },
-        { headers: { 'Content-Type': 'application/json' }, timeout: WEBHOOK_TIMEOUT_MS }
-      );
-
-      // n8n often wraps its response in an array — unwrap it
-      const raw = webhookRes.data;
-      console.log('[PREVIEW] ✅ Raw webhook response (status=%d, type=%s):', webhookRes.status, Array.isArray(raw) ? 'array' : typeof raw, JSON.stringify(raw));
-      aiFields = Array.isArray(raw) ? (raw[0] || {}) : (raw && typeof raw === 'object' ? raw : {});
-      console.log('[PREVIEW] Parsed aiFields:', JSON.stringify(aiFields));
-
-      if (!aiFields || !aiFields.category) {
-        console.warn('[PREVIEW] ⚠️  n8n returned empty/partial data — showing original fields for manual review.');
-        webhookOk = false;
-        webhookError = 'EMPTY_RESPONSE';
+    let mlOk = !req.file;
+    let mlError = null;
+    let mlResult = null;
+    if (req.file) {
+      try {
+        console.log('[PREVIEW] Calling ML severity service...');
+        mlResult = await callMlSeverityService(req.file);
+        mlOk = true;
+        console.log('[PREVIEW] ✅ ML severity:', JSON.stringify(mlResult));
+      } catch (mlErr) {
+        mlError = mlErr.response?.data?.detail || mlErr.message || 'ML_SERVICE_ERROR';
+        console.error('[PREVIEW] ❌ ML service failed:', mlError);
       }
-    } catch (webhookErr) {
-      const status = webhookErr.response?.status;
-      const responseBody = webhookErr.response?.data;
-      const isTimeout = webhookErr.code === 'ECONNABORTED' || webhookErr.message?.includes('timeout');
-      console.error('[PREVIEW] ❌ Webhook call failed — status:', status, '| body:', JSON.stringify(responseBody), '| code:', webhookErr.code, '| message:', webhookErr.message);
-      // Don't hard-fail — fall back to showing the original fields for the user to fill in
-      webhookOk = false;
-      webhookError = isTimeout ? 'TIMEOUT' : (status ? 'HTTP_ERROR' : 'NETWORK_ERROR');
     }
+
+    const mlSeverityAccepted =
+      mlResult &&
+      mlResult.severity &&
+      mlResult.confidence != null &&
+      mlResult.confidence >= ML_CONFIDENCE_THRESHOLD;
+
+    let webhookOk = true;
+    let webhookError = null;
+    let n8nResult = null;
+    try {
+      console.log('[PREVIEW] Calling n8n webhook...');
+      n8nResult = await callN8nWebhook(title, description, imageUrl);
+    } catch (webhookErr) {
+      webhookOk = false;
+      const status = webhookErr.response?.status;
+      const isTimeout = webhookErr.code === 'ECONNABORTED' || webhookErr.message?.includes('timeout');
+      webhookError = isTimeout ? 'TIMEOUT' : (status ? 'HTTP_ERROR' : 'NETWORK_ERROR');
+      console.error('[PREVIEW] ❌ Webhook call failed:', webhookError, webhookErr.message);
+    }
+
+    const finalAnalysis = n8nResult || {
+      description,
+      issue: null,
+      severity: 'None',
+      confidence: null,
+      department: null,
+      severityScore: scoreFromSeverity('None'),
+    };
+
+    if (mlSeverityAccepted) {
+      finalAnalysis.severity = mlResult.severity;
+      finalAnalysis.severityScore = mlResult.severityScore;
+      finalAnalysis.confidence = mlResult.confidence;
+    }
+
+    const source = !webhookOk
+      ? (mlSeverityAccepted ? 'n8n_error_ml_severity_only' : 'n8n_error_manual_review')
+      : (mlSeverityAccepted ? 'n8n_with_ml_severity_override' : 'n8n');
 
     const responseData = {
       imageUrl,
-      category: aiFields.category || null,
-      predictedIssueType: aiFields.predictedIssueType || null,
-      severityScore: aiFields.severityScore || null,
-      suggestedDepartment: aiFields.suggestedDepartment || null,
-      description: aiFields.description || description,
+      description: finalAnalysis?.description || description,
+      issueType: finalAnalysis?.issue || null,
+      category: finalAnalysis?.issue || null,
+      severity: finalAnalysis?.severity || 'None',
+      confidence: finalAnalysis?.confidence,
+      department: finalAnalysis?.department || null,
+      source,
+      mlOk,
+      mlError,
+      mlSeverityAccepted: Boolean(mlSeverityAccepted),
+      mlSeverity: mlResult?.severity || null,
+      mlConfidence: mlResult?.confidence ?? null,
+      mlDescription: mlResult?.description || null,
       webhookOk,
       webhookError,
+      predictedIssueType: finalAnalysis?.issue || null,
+      severityScore: finalAnalysis?.severityScore ?? null,
+      suggestedDepartment: finalAnalysis?.department || null,
     };
     console.log('[PREVIEW] Sending enriched fields to client:', JSON.stringify(responseData));
     console.log('[PREVIEW] ── Done. Awaiting user confirmation. ──\n');
@@ -107,6 +218,11 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
       description,
       location,
       category,
+      issueType,
+      severity,
+      confidence,
+      confidenceScore,
+      department,
       lat,
       lng,
       imageUrl,
@@ -119,7 +235,7 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
     console.log('[CREATE] Reported by:', clerkUserId);
     console.log('[CREATE] Title:', title);
     console.log('[CREATE] Description:', description);
-    console.log('[CREATE] Category:', category, '| Dept:', suggestedDepartment, '| Severity:', severityScore);
+    console.log('[CREATE] Category:', category || issueType, '| Dept:', department || suggestedDepartment, '| Severity:', severity || severityFromScore(severityScore));
     console.log('[CREATE] Predicted type:', predictedIssueType);
     console.log('[CREATE] Image URL:', imageUrl || 'none');
     console.log('[CREATE] GPS:', lat && lng ? `${lat}, ${lng}` : 'not provided');
@@ -130,19 +246,44 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
 
     const db = getDB();
 
-    const coordinates =
-      lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null;
+    let normalizedLocation = null;
+    if (typeof location === 'string' && location.startsWith('{')) {
+      try {
+        const parsedLocation = JSON.parse(location);
+        if (parsedLocation.lat != null && parsedLocation.lng != null) {
+          normalizedLocation = normalizeLocation(parsedLocation.lat, parsedLocation.lng);
+        }
+      } catch (locationError) {
+        console.warn('[CREATE] Unable to parse location JSON:', locationError.message);
+      }
+    } else if (location && typeof location === 'object' && location.lat != null && location.lng != null) {
+      normalizedLocation = normalizeLocation(location.lat, location.lng);
+    } else if (lat != null && lng != null) {
+      normalizedLocation = normalizeLocation(lat, lng);
+    }
+
+    const normalizedSeverity = normalizeSeverity(severity || severityFromScore(severityScore));
+    const normalizedConfidence =
+      parseConfidence(confidence) ??
+      parseConfidence(confidenceScore) ??
+      parseConfidence(Number(severityScore) / 10);
+    const normalizedCategory = category || issueType || predictedIssueType || null;
+    const normalizedDepartment = department || suggestedDepartment || null;
 
     const issue = {
       title,
       description,
-      location: location || null,
-      category: category || null,
+      location: normalizedLocation,
+      locationText: typeof location === 'string' && !location.startsWith('{') ? location : null,
+      category: normalizedCategory,
+      severity: normalizedSeverity,
+      confidence: normalizedConfidence,
+      department: normalizedDepartment,
       imageUrl: imageUrl || null,
-      predictedIssueType: predictedIssueType || null,
-      severityScore: severityScore != null ? parseInt(severityScore, 10) : null,
-      suggestedDepartment: suggestedDepartment || null,
-      coordinates,
+      predictedIssueType: normalizedCategory,
+      severityScore: scoreFromSeverity(normalizedSeverity),
+      suggestedDepartment: normalizedDepartment,
+      coordinates: normalizedLocation,
       reportedBy: clerkUserId,
       status: 'reported',
       upvotes: [],
@@ -186,7 +327,7 @@ router.post('/check-duplicate', async (req, res) => {
       .collection('issues')
       .find(
         { coordinates: { $ne: null }, status: { $ne: 'resolved' } },
-        { projection: { _id: 1, title: 1, description: 1, location: 1, imageUrl: 1, status: 1, category: 1, suggestedDepartment: 1, coordinates: 1, createdAt: 1, upvotes: 1 } }
+        { projection: { _id: 1, title: 1, description: 1, location: 1, imageUrl: 1, status: 1, category: 1, department: 1, suggestedDepartment: 1, severity: 1, coordinates: 1, createdAt: 1, upvotes: 1 } }
       )
       .toArray();
 
@@ -285,14 +426,13 @@ router.get('/pending-verifications', async (req, res) => {
   }
 });
 
-// Fetch all issues (newest first) with reporter name joined from users
+// Fetch all issues with reporter info, then sort by severity rank
 router.get('/', async (req, res) => {
   try {
     const db = getDB();
     const issues = await db
       .collection('issues')
       .aggregate([
-        { $sort: { createdAt: -1 } },
         {
           $lookup: {
             from: 'users',
@@ -313,7 +453,8 @@ router.get('/', async (req, res) => {
       ])
       .toArray();
 
-    res.json({ success: true, data: issues });
+    const sortedIssues = sortIssuesBySeverity(issues);
+    res.json({ success: true, data: sortedIssues });
   } catch (err) {
     console.error('Error fetching issues:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -568,7 +709,7 @@ router.patch('/:id', requireAuth(), async (req, res) => {
 
     const issueId = new ObjectId(req.params.id);
     const allowedFields = [
-      'status', 'severityScore', 'suggestedDepartment',
+      'status', 'severity', 'confidence', 'department', 'severityScore', 'suggestedDepartment',
       'title', 'description', 'location', 'predictedIssueType',
     ];
 
@@ -577,6 +718,22 @@ router.patch('/:id', requireAuth(), async (req, res) => {
       if (req.body[field] !== undefined) {
         updates[field] = req.body[field];
       }
+    }
+
+    if (updates.severity !== undefined) {
+      updates.severity = normalizeSeverity(updates.severity);
+      updates.severityScore = scoreFromSeverity(updates.severity);
+    } else if (updates.severityScore !== undefined) {
+      updates.severity = severityFromScore(updates.severityScore);
+      updates.severityScore = scoreFromSeverity(updates.severity);
+    }
+
+    if (updates.confidence !== undefined) {
+      updates.confidence = parseConfidence(updates.confidence);
+    }
+
+    if (updates.department !== undefined && updates.suggestedDepartment === undefined) {
+      updates.suggestedDepartment = updates.department;
     }
 
     if (Object.keys(updates).length === 0) {

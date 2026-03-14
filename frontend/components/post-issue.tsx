@@ -275,6 +275,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           description: issue.description || "",
           imageUrl: issue.imageUrl || "",
           location: issue.location || "",
+          status: issue.status || "reported",
+          upvotes: issue.upvotes || [],
+          createdAt: issue.createdAt || new Date().toISOString(),
           similarityScore: 100,
           distanceMeters: 0
         };

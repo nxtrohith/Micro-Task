@@ -11,7 +11,7 @@ export interface DuplicateMatch {
   _id: string;
   title: string;
   description: string;
-  location?: string;
+  location?: string | { lat: number; lng: number };
   imageUrl?: string;
   status: string;
   category?: string;

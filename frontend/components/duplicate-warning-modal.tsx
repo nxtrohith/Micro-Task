@@ -11,7 +11,7 @@ export interface DuplicateMatch {
   _id: string;
   title: string;
   description: string;
-  location?: string;
+  location?: string | { lat: number; lng: number };
   imageUrl?: string;
   status: string;
   category?: string;
@@ -101,8 +101,13 @@ function MatchCard({ match }: { match: DuplicateMatch }) {
             <span className="flex items-center gap-0.5"><Tag className="h-3 w-3" />{match.category}</span>
           )}
           {match.location && (
-            <span className="flex items-center gap-0.5"><MapPin className="h-3 w-3" />{match.location}</span>
-          )}
+  <span className="flex items-center gap-0.5">
+    <MapPin className="h-3 w-3" />
+    {typeof match.location === "string"
+      ? match.location
+      : `${match.location.lat}, ${match.location.lng}`}
+  </span>
+)}
         </div>
       </div>
 

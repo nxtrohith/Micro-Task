@@ -1,6 +1,7 @@
 const express = require('express');
 const { ObjectId } = require('mongodb');
 const axios = require('axios');
+const { isDuplicate } = require('../utils/duplicateDetector');
 const FormData = require('form-data');
 const upload = require('../middleware/upload');
 const { requireAuth, getAuth } = require('../middleware/auth');
@@ -150,6 +151,59 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       console.log('[PREVIEW] No image — skipping Cloudinary upload.');
     }
 
+    // -------------------------------------------------
+    // IMAGE DUPLICATE DETECTION
+    // -------------------------------------------------
+
+    if (req.file) {
+
+      const db = getDB();
+
+      const existingIssues = await db
+        .collection('issues')
+        .find({ imageUrl: { $ne: null } })
+        .project({
+          title: 1,
+          description: 1,
+          imageUrl: 1,
+          location: 1,
+          severity: 1,
+          createdAt: 1
+        })
+        .toArray();
+
+      if (existingIssues.length > 0) {
+
+        const existingImages = existingIssues
+          .map(issue => issue.imageUrl)
+          .filter(Boolean);
+
+        const duplicateIndex = await isDuplicate(
+          req.file.buffer,
+          existingImages
+        );
+
+        if (duplicateIndex !== false) {
+
+          const duplicateIssue = existingIssues[duplicateIndex];
+
+          console.log('[PREVIEW] ⚠ Duplicate image detected');
+
+          return res.status(200).json({
+            success: true,
+            duplicate: true,
+            originalIssue: duplicateIssue,
+            message: "A similar issue image already exists"
+          });
+
+        }
+
+      }
+
+      console.log('[PREVIEW] ✅ Image passed duplicate detection');
+
+    }
+
     let mlOk = !req.file;
     let mlError = null;
     let mlResult = null;
@@ -158,7 +212,10 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
         console.log('[PREVIEW] Calling ML severity service...');
         mlResult = await callMlSeverityService(req.file);
         mlOk = true;
-        console.log('[PREVIEW] ✅ ML severity:', JSON.stringify(mlResult));
+
+        console.log('[ML] Severity:', mlResult.severity);
+        console.log('[ML] Confidence:', mlResult.confidence);
+        console.log('[ML] Severity Score:', mlResult.severityScore);
       } catch (mlErr) {
         mlError = mlErr.response?.data?.detail || mlErr.message || 'ML_SERVICE_ERROR';
         console.error('[PREVIEW] ❌ ML service failed:', mlError);

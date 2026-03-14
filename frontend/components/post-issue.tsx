@@ -257,6 +257,43 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       previewAbortRef.current = null;
 
       const data = await res.json().catch(() => ({}));
+      /* --------------------------------
+        IMAGE DUPLICATE DETECTION
+      -------------------------------- */
+
+      if (data?.duplicate && data?.originalIssue) {
+
+        console.log("Duplicate issue detected:", data.originalIssue);
+
+        setStage("form");
+
+        const issue = data.originalIssue;
+
+        const formattedMatch = {
+          _id: issue._id || Math.random().toString(),
+          title: issue.title || "Existing Issue",
+          description: issue.description || "",
+          imageUrl: issue.imageUrl || "",
+          location: issue.location || "",
+          status: issue.status || "reported",
+          upvotes: issue.upvotes || [],
+          createdAt: issue.createdAt || new Date().toISOString(),
+          similarityScore: 100,
+          distanceMeters: 0
+        };
+
+        setDuplicateMatches([formattedMatch]);
+
+        return;
+      }
+
+      /* --------------------------------
+        NORMAL PREVIEW FLOW
+      -------------------------------- */
+
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || "Preview failed");
+      }
 
       // Even if the call failed, fall back gracefully to review with original fields
       const responseData = res.ok ? data.data : null;
@@ -272,6 +309,7 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           responseData.description
         )
       );
+      
 
       if (!res.ok || !aiDataPresent) {
         setWebhookFailed(true);
@@ -281,6 +319,23 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       }
 
       const mlConfidence = Number(responseData?.mlConfidence ?? responseData?.confidence);
+
+      if (Number.isFinite(mlConfidence)) {
+
+        const percent = (mlConfidence * 100).toFixed(1);
+
+        setProcessingStatusMessage(
+          `ML model confidence: ${percent}%`
+        );
+
+        await sleep(900);
+
+        setProcessingStatusMessage(
+          mlConfidence >= 0.8
+            ? `High confidence (${percent}%) — ML severity estimation used`
+            : `Low confidence (${percent}%) — AI agent performing deeper analysis`
+        );
+      }
       if (Number.isFinite(mlConfidence)) {
         setProcessingStatusMessage(
           mlConfidence >= 0.8 ? ML_HIGH_MESSAGE : ML_LOW_MESSAGE

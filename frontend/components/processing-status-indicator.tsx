@@ -4,8 +4,8 @@ interface ProcessingStatusIndicatorProps {
 
 export function ProcessingStatusIndicator({ message }: ProcessingStatusIndicatorProps) {
   return (
-    <p className="animate-processing-fade text-xs text-muted-foreground">
-      {message}
-    </p>
+    <div className="animate-processing-fade text-xs text-muted-foreground space-y-1">
+      <p>{message}</p>
+    </div>
   );
 }

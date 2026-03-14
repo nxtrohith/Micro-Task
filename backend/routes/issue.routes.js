@@ -212,7 +212,10 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
         console.log('[PREVIEW] Calling ML severity service...');
         mlResult = await callMlSeverityService(req.file);
         mlOk = true;
-        console.log('[PREVIEW] ✅ ML severity:', JSON.stringify(mlResult));
+
+        console.log('[ML] Severity:', mlResult.severity);
+        console.log('[ML] Confidence:', mlResult.confidence);
+        console.log('[ML] Severity Score:', mlResult.severityScore);
       } catch (mlErr) {
         mlError = mlErr.response?.data?.detail || mlErr.message || 'ML_SERVICE_ERROR';
         console.error('[PREVIEW] ❌ ML service failed:', mlError);

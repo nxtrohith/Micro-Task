@@ -316,6 +316,23 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       }
 
       const mlConfidence = Number(responseData?.mlConfidence ?? responseData?.confidence);
+
+      if (Number.isFinite(mlConfidence)) {
+
+        const percent = (mlConfidence * 100).toFixed(1);
+
+        setProcessingStatusMessage(
+          `ML model confidence: ${percent}%`
+        );
+
+        await sleep(900);
+
+        setProcessingStatusMessage(
+          mlConfidence >= 0.8
+            ? `High confidence (${percent}%) — ML severity estimation used`
+            : `Low confidence (${percent}%) — AI agent performing deeper analysis`
+        );
+      }
       if (Number.isFinite(mlConfidence)) {
         setProcessingStatusMessage(
           mlConfidence >= 0.8 ? ML_HIGH_MESSAGE : ML_LOW_MESSAGE

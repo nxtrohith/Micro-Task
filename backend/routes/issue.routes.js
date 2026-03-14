@@ -13,6 +13,15 @@ const router = express.Router();
 const WEBHOOK_URL = 'https://n8n1.rohithn8n.me/webhook/cad109f9-1c30-404a-be6b-6a6aa8c90b64';
 const WEBHOOK_TIMEOUT_MS = 90000; // 90 s — production n8n workflows can take longer than 60 s
 
+function parseIntegerOrNull(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 // ---------- POST /api/issues/preview  ----------
 // Step 1: Upload image to Cloudinary, call n8n webhook, return AI-enriched fields.
 // The issue is NOT saved to the DB here.
@@ -78,8 +87,12 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       imageUrl,
       category: aiFields.category || null,
       predictedIssueType: aiFields.predictedIssueType || null,
-      severityScore: aiFields.severityScore || null,
+      severityScore: parseIntegerOrNull(aiFields.severityScore),
+      impactScope: aiFields.impactScope || null,
+      urgency: aiFields.urgency || null,
+      priorityScore: parseIntegerOrNull(aiFields.priorityScore),
       suggestedDepartment: aiFields.suggestedDepartment || null,
+      estimatedResolution: aiFields.estimatedResolution || null,
       description: aiFields.description || description,
       webhookOk,
       webhookError,
@@ -112,7 +125,11 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
       imageUrl,
       predictedIssueType,
       severityScore,
+      impactScope,
+      urgency,
+      priorityScore,
       suggestedDepartment,
+      estimatedResolution,
     } = req.body;
 
     console.log('\n[CREATE] ── User confirmed issue, saving to DB ──');
@@ -121,6 +138,7 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
     console.log('[CREATE] Description:', description);
     console.log('[CREATE] Category:', category, '| Dept:', suggestedDepartment, '| Severity:', severityScore);
     console.log('[CREATE] Predicted type:', predictedIssueType);
+    console.log('[CREATE] Impact:', impactScope, '| Urgency:', urgency, '| Priority:', priorityScore, '| ETA:', estimatedResolution);
     console.log('[CREATE] Image URL:', imageUrl || 'none');
     console.log('[CREATE] GPS:', lat && lng ? `${lat}, ${lng}` : 'not provided');
 
@@ -140,8 +158,12 @@ router.post('/', createIssueLimiter, requireAuth(), async (req, res) => {
       category: category || null,
       imageUrl: imageUrl || null,
       predictedIssueType: predictedIssueType || null,
-      severityScore: severityScore != null ? parseInt(severityScore, 10) : null,
+      severityScore: parseIntegerOrNull(severityScore),
+      impactScope: impactScope || null,
+      urgency: urgency || null,
+      priorityScore: parseIntegerOrNull(priorityScore),
       suggestedDepartment: suggestedDepartment || null,
+      estimatedResolution: estimatedResolution || null,
       coordinates,
       reportedBy: clerkUserId,
       status: 'reported',
@@ -568,14 +590,16 @@ router.patch('/:id', requireAuth(), async (req, res) => {
 
     const issueId = new ObjectId(req.params.id);
     const allowedFields = [
-      'status', 'severityScore', 'suggestedDepartment',
+      'status', 'severityScore', 'impactScope', 'urgency', 'priorityScore', 'suggestedDepartment', 'estimatedResolution',
       'title', 'description', 'location', 'predictedIssueType',
     ];
 
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        updates[field] = ['severityScore', 'priorityScore'].includes(field)
+          ? parseIntegerOrNull(req.body[field])
+          : req.body[field];
       }
     }
 

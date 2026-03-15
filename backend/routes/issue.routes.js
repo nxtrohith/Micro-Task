@@ -110,6 +110,49 @@ async function callN8nWebhook(title, description, imageUrl) {
     { headers: { 'Content-Type': 'application/json' }, timeout: WEBHOOK_TIMEOUT_MS }
   );
   const raw = webhookRes.data;
+  
+  // Check for invalid/blurry image BEFORE normalization
+  if (Array.isArray(raw) && raw.length > 0) {
+    const firstResult = raw[0] || {};
+    const valueOf = (obj, keys) => {
+      for (const key of keys) {
+        if (obj?.[key] != null) return obj[key];
+      }
+      return null;
+    };
+    const matchesSentinel = (value, sentinel) => Number(value) === sentinel;
+
+    const issueValue = valueOf(firstResult, ['predictedIssueType', 'issueType', 'issue', 'category']);
+    const severityScoreValue = valueOf(firstResult, ['severityScore', 'severity_score']);
+    const impactScopeValue = valueOf(firstResult, ['impactScope', 'impact_scope', 'impact']);
+    const urgencyValue = valueOf(firstResult, ['urgency']);
+    const priorityScoreValue = valueOf(firstResult, ['priorityScore', 'priority_score', 'priority']);
+    const departmentValue = valueOf(firstResult, ['suggestedDepartment', 'department']);
+    const estimatedResolutionValue = valueOf(firstResult, ['estimatedResolution', 'estimated_resolution', 'resolutionEta', 'resolution_eta']);
+
+    const allFieldsMatch = (sentinel) => (
+      matchesSentinel(issueValue, sentinel) &&
+      matchesSentinel(severityScoreValue, sentinel) &&
+      matchesSentinel(impactScopeValue, sentinel) &&
+      matchesSentinel(urgencyValue, sentinel) &&
+      matchesSentinel(priorityScoreValue, sentinel) &&
+      matchesSentinel(departmentValue, sentinel) &&
+      matchesSentinel(estimatedResolutionValue, sentinel)
+    );
+
+    const isBlurryImage = allFieldsMatch(300);
+    const isOutOfContext = allFieldsMatch(400);
+
+    if (isBlurryImage || isOutOfContext) {
+      // Return raw invalid response without normalization
+      return {
+        invalidImage: true,
+        invalidImageType: isBlurryImage ? 'BLURRY' : 'OUT_OF_CONTEXT',
+        description: firstResult.description || (isBlurryImage ? 'Blurry image' : 'Invalid'),
+      };
+    }
+  }
+  
   const parsed = Array.isArray(raw) ? (raw[0] || {}) : (raw && typeof raw === 'object' ? raw : {});
   return normalizeN8nAnalysis(parsed, description);
 }
@@ -177,6 +220,21 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
     try {
       console.log('[PREVIEW] Calling n8n webhook...');
       n8nResult = await callN8nWebhook(title, description, imageUrl);
+      
+      // Check if n8n returned an invalid/blurry image response
+      if (n8nResult?.invalidImage === true) {
+        const invalidType = n8nResult.invalidImageType || 'OUT_OF_CONTEXT';
+        console.log(`[PREVIEW] ⚠️ n8n detected ${invalidType} IMAGE`);
+        return res.status(200).json({
+          success: true,
+          data: {
+            imageUrl,
+            invalidImage: true,
+            invalidImageType: invalidType,
+            description: n8nResult.description || (invalidType === 'BLURRY' ? 'Blurry image' : 'Invalid'),
+          }
+        });
+      }
     } catch (webhookErr) {
       webhookOk = false;
       const status = webhookErr.response?.status;
@@ -248,6 +306,10 @@ router.post('/preview', aiPreviewLimiter, requireAuth(), upload.single('image'),
       // Webhook status
       webhookOk,
       webhookError,
+
+      // Invalid image flags
+      invalidImage: false,
+      invalidImageType: null,
     };
     console.log('[PREVIEW] Sending enriched fields to client:', JSON.stringify(responseData));
     console.log('[PREVIEW] ── Done. Awaiting user confirmation. ──\n');

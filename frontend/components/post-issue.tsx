@@ -88,6 +88,43 @@ interface AIFields {
   description: string;
 }
 
+function isSentinelInvalidAiResponse(value: unknown): { isInvalid: boolean; type: "BLURRY" | "OUT_OF_CONTEXT" | null } {
+  if (!value || typeof value !== "object") {
+    return { isInvalid: false, type: null };
+  }
+
+  const source = value as Record<string, unknown>;
+  const read = (keys: string[]): unknown => {
+    for (const key of keys) {
+      if (source[key] != null) return source[key];
+    }
+    return null;
+  };
+
+  const issue = read(["predictedIssueType", "issueType", "issue", "category"]);
+  const severityScore = read(["severityScore", "severity_score"]);
+  const impactScope = read(["impactScope", "impact_scope", "impact"]);
+  const urgency = read(["urgency"]);
+  const priorityScore = read(["priorityScore", "priority_score", "priority"]);
+  const department = read(["suggestedDepartment", "department"]);
+  const estimatedResolution = read(["estimatedResolution", "estimated_resolution", "resolutionEta", "resolution_eta"]);
+
+  const matches = (candidate: unknown, sentinel: number) => Number(candidate) === sentinel;
+  const allMatch = (sentinel: number) => (
+    matches(issue, sentinel) &&
+    matches(severityScore, sentinel) &&
+    matches(impactScope, sentinel) &&
+    matches(urgency, sentinel) &&
+    matches(priorityScore, sentinel) &&
+    matches(department, sentinel) &&
+    matches(estimatedResolution, sentinel)
+  );
+
+  if (allMatch(300)) return { isInvalid: true, type: "BLURRY" };
+  if (allMatch(400)) return { isInvalid: true, type: "OUT_OF_CONTEXT" };
+  return { isInvalid: false, type: null };
+}
+
 interface PostIssueProps {
   onSuccess?: () => void;
 }
@@ -128,6 +165,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [, setInvalidImage] = useState(false);
+  const [invalidImageType, setInvalidImageType] = useState<'BLURRY' | 'OUT_OF_CONTEXT' | null>(null);
+  const [showInvalidImagePrompt, setShowInvalidImagePrompt] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const { status: geoStatus, coords, error: geoError, requestLocation, reset: resetGeo } = useGeolocation();
   // Store GPS coords captured during analyze step
@@ -196,6 +236,31 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  function handleReuploadImage() {
+    // Reset invalid image state
+    setInvalidImage(false);
+    setInvalidImageType(null);
+    setShowInvalidImagePrompt(false);
+    // Clear current image
+    removeImage();
+    // Trigger file input
+    fileRef.current?.click();
+  }
+
+  function handleCancelPost() {
+    // Reset invalid image state
+    setInvalidImage(false);
+    setInvalidImageType(null);
+    setShowInvalidImagePrompt(false);
+    // Reset form
+    setStage("form");
+    setForm({ title: "", description: "", location: "" });
+    removeImage();
+    setErrors({});
+    setSubmitError(null);
+    setExpanded(false);
+  }
+
   function validate(): boolean {
     const newErrors: FormErrors = {};
     if (!form.title.trim() || form.title.trim().length < 5) {
@@ -222,6 +287,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
     setWebhookErrorCode(null);
     setAnalysisTimedOut(false);
     setProcessingStatusMessage(AI_RUNNING_MESSAGE);
+    setInvalidImage(false);
+    setInvalidImageType(null);
+    setShowInvalidImagePrompt(false);
 
     // Set up an AbortController so we never hang forever
     const controller = new AbortController();
@@ -295,8 +363,29 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
         throw new Error(data?.message || "Preview failed");
       }
 
+      // Check for invalid/blurry image response
+      const responseData = ((data && typeof data === "object" && "data" in data)
+        ? (data as { data?: Record<string, unknown> }).data
+        : data) as Record<string, unknown> | null;
+      const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+      const asNumberOrString = (value: unknown): number | string =>
+        typeof value === "number" || typeof value === "string" ? value : "";
+      const asNullableString = (value: unknown): string | null =>
+        typeof value === "string" ? value : null;
+      const sentinelInvalid = isSentinelInvalidAiResponse(responseData);
+      if (responseData?.invalidImage === true || sentinelInvalid.isInvalid) {
+        setInvalidImage(true);
+        setInvalidImageType(
+          (responseData?.invalidImageType as "BLURRY" | "OUT_OF_CONTEXT" | undefined) ||
+          sentinelInvalid.type ||
+          'OUT_OF_CONTEXT'
+        );
+        setShowInvalidImagePrompt(true);
+        setStage("form");
+        return;
+      }
+
       // Even if the call failed, fall back gracefully to review with original fields
-      const responseData = res.ok ? data.data : null;
       const aiDataPresent = Boolean(
         responseData && (
           responseData.predictedIssueType ||
@@ -313,9 +402,9 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
 
       if (!res.ok || !aiDataPresent) {
         setWebhookFailed(true);
-        setWebhookErrorCode(responseData?.webhookError ?? (res.ok ? "EMPTY_RESPONSE" : "HTTP_ERROR"));
+        setWebhookErrorCode(asString(responseData?.webhookError) || (res.ok ? "EMPTY_RESPONSE" : "HTTP_ERROR"));
       } else {
-        setWebhookErrorCode(responseData?.webhookError ?? null);
+        setWebhookErrorCode(asNullableString(responseData?.webhookError));
       }
 
       const mlConfidence = Number(responseData?.mlConfidence ?? responseData?.confidence);
@@ -344,40 +433,40 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
       }
 
       setAiFields({
-  imageUrl: responseData?.imageUrl ?? null,
+  imageUrl: asNullableString(responseData?.imageUrl),
 
   // Issue classification
   predictedIssueType:
-    responseData?.issueType ??
-    responseData?.predictedIssueType ??
+    asString(responseData?.issueType) ||
+    asString(responseData?.predictedIssueType) ||
     "",
 
   // Severity
   severity:
-    responseData?.severity ??
+    asString(responseData?.severity) ||
     severityFromScore(responseData?.severityScore),
 
-  severityScore: responseData?.severityScore ?? "",
+  severityScore: asNumberOrString(responseData?.severityScore),
 
   // Confidence
-  confidence: responseData?.confidence ?? "",
+  confidence: asNumberOrString(responseData?.confidence),
 
   // Department routing
   suggestedDepartment:
-    responseData?.department ??
-    responseData?.suggestedDepartment ??
+    asString(responseData?.department) ||
+    asString(responseData?.suggestedDepartment) ||
     "",
 
   // Impact metrics
-  impactScope: responseData?.impactScope ?? "",
-  urgency: responseData?.urgency ?? "",
-  priorityScore: responseData?.priorityScore ?? "",
+  impactScope: asString(responseData?.impactScope),
+  urgency: asString(responseData?.urgency),
+  priorityScore: asNumberOrString(responseData?.priorityScore),
 
   // Resolution estimate
-  estimatedResolution: responseData?.estimatedResolution ?? "",
+  estimatedResolution: asString(responseData?.estimatedResolution),
 
   // Description
-  description: responseData?.description ?? form.description.trim(),
+  description: asString(responseData?.description) || form.description.trim(),
       });
       setStage("review");
     } catch (err: unknown) {
@@ -1057,6 +1146,50 @@ export function PostIssue({ onSuccess }: PostIssueProps) {
           onSubmitAnyway={() => handleConfirm(true)}
           onClose={() => setDuplicateMatches([])}
         />
+      )}
+
+      {/* Invalid image prompt modal */}
+      {showInvalidImagePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-border bg-card shadow-xl">
+            <div className="p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <h3 className="text-lg font-semibold">
+                    {invalidImageType === 'BLURRY' ? 'Blurry Image Detected' : 'Invalid Image'}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {invalidImageType === 'BLURRY' 
+                      ? 'The uploaded image is too blurry, obscured, or of insufficient quality to analyze. Please upload a clearer photo.'
+                      : 'The uploaded image does not appear to be related to civic, infrastructure, urban, or public safety issues. Please upload a relevant photo.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2">
+                <Button
+                  onClick={handleReuploadImage}
+                  className="w-full"
+                  size="sm"
+                >
+                  <ImagePlus className="h-4 w-4 mr-2" />
+                  Re-upload Image
+                </Button>
+                <Button
+                  onClick={handleCancelPost}
+                  variant="outline"
+                  className="w-full"
+                  size="sm"
+                >
+                  Cancel Post
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
